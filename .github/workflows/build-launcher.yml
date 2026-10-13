@@ -24,25 +24,37 @@ jobs:
         with:
           go-version: "1.23.x"
 
-      - name: Prepare launcher artwork
+      - name: Recover exact original DawnForge launcher
         run: |
           sudo apt-get update
-          sudo apt-get install -y imagemagick
-          curl -fL --retry 3 --retry-delay 2             "https://dawnforge.eu/images/dawnforge-launcher-web-full.webp"             -o launcher/background-source.webp
-          convert launcher/background-source.webp             -resize 1458x972^ -gravity center -extent 1458x972             -quality 90 launcher/background.jpg
-          test -s launcher/background.jpg
-          base64 -d launcher/icon64.b64 > launcher/dawnforge.ico
-          test -s launcher/dawnforge.ico
+          sudo apt-get install -y p7zip-full
+          curl -fL --retry 3 --retry-delay 2 \
+            "https://raw.githubusercontent.com/Mahoking1992/DawnForge-Launcher/main/download/DawnForgeLauncherSetup.rar" \
+            -o /tmp/DawnForgeLauncherSetup.rar
+          rm -rf /tmp/df-old
+          mkdir -p /tmp/df-old
+          7z x -y -o/tmp/df-old /tmp/DawnForgeLauncherSetup.rar >/dev/null
+          test -s /tmp/df-old/DawnForgeLauncherSetup.exe
+          python3 - <<'PY'
+          from pathlib import Path
+          setup = Path("/tmp/df-old/DawnForgeLauncherSetup.exe").read_bytes()
+          offset = 1004416
+          size = 8619520
+          core = setup[offset:offset+size]
+          if len(core) != size or core[:2] != b"MZ":
+              raise SystemExit("Original launcher payload validation failed")
+          Path("launcher/DawnForgeOriginal.exe").write_bytes(core)
+          print("Recovered original launcher:", len(core), "bytes")
+          PY
+          test "$(stat -c%s launcher/DawnForgeOriginal.exe)" = "8619520"
 
-      - name: Build Windows launcher
+      - name: Build Windows hover wrapper
         working-directory: launcher
         env:
           GOOS: windows
           GOARCH: amd64
           CGO_ENABLED: "0"
         run: |
-          go install github.com/akavel/rsrc@latest
-          "$(go env GOPATH)/bin/rsrc" -ico dawnforge.ico -o rsrc.syso
           go build -trimpath -ldflags "-s -w -H=windowsgui" -o DawnForgeLauncher.exe .
           test -s DawnForgeLauncher.exe
           sha256sum DawnForgeLauncher.exe
@@ -57,7 +69,7 @@ jobs:
           SHA="$(sha256sum download/DawnForgeLauncher.exe | awk '{print $1}')"
           cat > download/launcher-update.json <<JSON
           {
-            "version": "1.0.10",
+            "version": "1.0.11",
             "url": "https://raw.githubusercontent.com/Mahoking1992/DawnForge-Launcher/main/download/DawnForgeLauncher.exe",
             "sha256": "$SHA"
           }
@@ -73,6 +85,6 @@ jobs:
           if git diff --cached --quiet; then
             echo "Generated launcher is already current."
           else
-            git commit -m "Publish DawnForge Launcher v1.0.10"
+            git commit -m "Publish DawnForge Launcher v1.0.11"
             git push
           fi
