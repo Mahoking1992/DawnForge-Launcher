@@ -30,7 +30,7 @@ import (
 )
 
 const (
-    appVersion = "1.0.9"
+    appVersion = "1.0.10"
     appName    = "DawnForge Launcher"
 
     configURL     = "https://dawnforge.eu/launcher/client/config.json"
@@ -45,6 +45,9 @@ const (
 
 //go:embed background.jpg
 var backgroundPNG []byte
+
+//go:embed dawnforge.ico
+var launcherIcon []byte
 
 var (
     user32   = syscall.NewLazyDLL("user32.dll")
@@ -315,7 +318,11 @@ func ensureInstalled() error {
     if local == "" { return errors.New("LOCALAPPDATA is not available") }
     dir := filepath.Join(local, "DawnForge", "Launcher")
     target := filepath.Join(dir, "DawnForgeLauncher.exe")
-    if samePath(exe, target) { return nil }
+    if samePath(exe, target) {
+        writeLauncherIcon(dir)
+        createShortcuts(target)
+        return nil
+    }
 
     if err := os.MkdirAll(dir, 0755); err != nil { return err }
     src, err := os.Open(exe)
@@ -330,6 +337,7 @@ func ensureInstalled() error {
     _ = os.Remove(target)
     if err = os.Rename(tmp, target); err != nil { return err }
 
+    writeLauncherIcon(dir)
     createShortcuts(target)
     cmd := exec.Command(target)
     cmd.Dir = dir
@@ -338,8 +346,14 @@ func ensureInstalled() error {
     return nil
 }
 
+func writeLauncherIcon(dir string) {
+    if len(launcherIcon) == 0 { return }
+    _ = os.WriteFile(filepath.Join(dir, "DawnForge.ico"), launcherIcon, 0644)
+}
+
 func createShortcuts(target string) {
-    ps := fmt.Sprintf(`$ws=New-Object -ComObject WScript.Shell; $d=[Environment]::GetFolderPath('Desktop'); $s=$ws.CreateShortcut((Join-Path $d 'DawnForge Launcher.lnk')); $s.TargetPath='%s'; $s.WorkingDirectory='%s'; $s.Save(); $m=Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'; $s2=$ws.CreateShortcut((Join-Path $m 'DawnForge Launcher.lnk')); $s2.TargetPath='%s'; $s2.WorkingDirectory='%s'; $s2.Save()`, psQuote(target), psQuote(filepath.Dir(target)), psQuote(target), psQuote(filepath.Dir(target)))
+    icon := filepath.Join(filepath.Dir(target), "DawnForge.ico")
+    ps := fmt.Sprintf(`$ws=New-Object -ComObject WScript.Shell; $d=[Environment]::GetFolderPath('Desktop'); $s=$ws.CreateShortcut((Join-Path $d 'DawnForge Launcher.lnk')); $s.TargetPath='%s'; $s.WorkingDirectory='%s'; $s.IconLocation='%s,0'; $s.Save(); $m=Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'; $s2=$ws.CreateShortcut((Join-Path $m 'DawnForge Launcher.lnk')); $s2.TargetPath='%s'; $s2.WorkingDirectory='%s'; $s2.IconLocation='%s,0'; $s2.Save()`, psQuote(target), psQuote(filepath.Dir(target)), psQuote(icon), psQuote(target), psQuote(filepath.Dir(target)), psQuote(icon))
     _ = exec.Command("powershell.exe", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps).Run()
 }
 
@@ -367,7 +381,7 @@ func loadBackground() error {
 
 func createWindow() error {
     hInst, _, _ := procGetModuleHandleW.Call(0)
-    className := utf16Ptr("DawnForgeLauncherV109")
+    className := utf16Ptr("DawnForgeLauncherV110")
     arrowCursor, _, _ = procLoadCursorW.Call(0, IDC_ARROW)
     handCursor, _, _ = procLoadCursorW.Call(0, IDC_HAND)
     wc := WNDCLASSEX{
