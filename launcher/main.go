@@ -13,6 +13,7 @@ import (
     "image"
     "image/draw"
     _ "image/jpeg"
+    _ "image/png"
     "io"
     "net/http"
     "net/url"
@@ -43,7 +44,7 @@ const (
     baseH = 972
 )
 
-//go:embed background.jpg
+//go:embed background.png
 var backgroundPNG []byte
 
 //go:embed dawnforge.ico
@@ -297,7 +298,6 @@ func main() {
     }
 
     go statusLoop()
-    go checkSelfUpdate()
 
     var msg MSG
     for {
@@ -514,14 +514,7 @@ func handleAction(hwnd uintptr, id int) {
     case hitInstall:
         startTask("INSTALLING DAWNFORGE", installGame)
     case hitUpdate:
-        state.mu.Lock()
-        meta := state.updateMeta
-        state.mu.Unlock()
-        if meta != nil {
-            startTask("UPDATING LAUNCHER", func() error { return performSelfUpdate(*meta) })
-        } else {
-            startTask("CHECKING GAME FILES", updateGame)
-        }
+        startTask("CHECKING GAME FILES", updateGame)
     case hitPlay:
         go playGame()
     }
@@ -579,7 +572,6 @@ func paint(hwnd uintptr) {
     status := state.status
     detail := state.detail
     progress := state.progress
-    meta := state.updateMeta
     state.mu.Unlock()
 
     frame := make([]byte, len(basePixels))
@@ -587,7 +579,6 @@ func paint(hwnd uintptr) {
 
     fillBGRA(frame, 578, 617, 880, 687, 8, 9, 7, 235)
     fillBGRA(frame, 393, 724, 894, 818, 5, 8, 8, 245)
-    fillBGRA(frame, 10, 936, 300, 970, 6, 6, 6, 245)
 
     if hover != hitNone {
         r := hitByID(hover)
@@ -639,10 +630,6 @@ func paint(hwnd uintptr) {
     }
     drawText(hdc, scaleRect(578, 646, 880, 687, sx, sy), realm, 24, rr, gg, bb, true)
 
-    if meta != nil && !busy {
-        status = "LAUNCHER UPDATE AVAILABLE"
-        detail = "Click UPDATE to install v" + meta.Version
-    }
     drawText(hdc, scaleRect(400, 728, 888, 755, sx, sy), status, 16, 255, 250, 230, true)
 
     bar := scaleRect(411, 760, 820, 782, sx, sy)
@@ -654,7 +641,6 @@ func paint(hwnd uintptr) {
     if fill.Right > fill.Left { fillWinRect(hdc, fill, 255, 185, 55) }
 
     drawText(hdc, scaleRect(397, 787, 890, 815, sx, sy), truncate(detail, 80), 13, 232, 218, 196, true)
-    drawText(hdc, scaleRect(24, 941, 295, 970, sx, sy), "DawnForge Launcher   v"+appVersion, 13, 208, 173, 113, false)
 }
 
 func mouseBase(hwnd, lParam uintptr) (int, int) {
