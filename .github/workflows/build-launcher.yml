@@ -31,6 +31,8 @@ jobs:
           curl -fL --retry 3 --retry-delay 2             "https://dawnforge.eu/images/dawnforge-launcher-web-full.webp"             -o launcher/background-source.webp
           convert launcher/background-source.webp             -resize 1458x972^ -gravity center -extent 1458x972             -quality 90 launcher/background.jpg
           test -s launcher/background.jpg
+          base64 -d launcher/icon64.b64 > launcher/dawnforge.ico
+          test -s launcher/dawnforge.ico
 
       - name: Build Windows launcher
         working-directory: launcher
@@ -39,6 +41,8 @@ jobs:
           GOARCH: amd64
           CGO_ENABLED: "0"
         run: |
+          go install github.com/akavel/rsrc@latest
+          "$(go env GOPATH)/bin/rsrc" -ico dawnforge.ico -o rsrc.syso
           go build -trimpath -ldflags "-s -w -H=windowsgui" -o DawnForgeLauncher.exe .
           test -s DawnForgeLauncher.exe
           sha256sum DawnForgeLauncher.exe
@@ -53,7 +57,7 @@ jobs:
           SHA="$(sha256sum download/DawnForgeLauncher.exe | awk '{print $1}')"
           cat > download/launcher-update.json <<JSON
           {
-            "version": "1.0.9",
+            "version": "1.0.10",
             "url": "https://raw.githubusercontent.com/Mahoking1992/DawnForge-Launcher/main/download/DawnForgeLauncher.exe",
             "sha256": "$SHA"
           }
@@ -69,6 +73,6 @@ jobs:
           if git diff --cached --quiet; then
             echo "Generated launcher is already current."
           else
-            git commit -m "Publish DawnForge Launcher v1.0.9"
+            git commit -m "Publish DawnForge Launcher v1.0.10"
             git push
           fi
