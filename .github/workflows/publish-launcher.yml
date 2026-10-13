@@ -1,0 +1,38 @@
+name: Publish DawnForge Launcher
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/publish-launcher.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download launcher package
+        run: |
+          mkdir -p download
+          curl -fL --retry 3 --retry-delay 2             -o download/DawnForgeLauncherSetup.rar             "https://dawnforge.eu/download/DawnForgeLauncherSetup.rar"
+          test -s download/DawnForgeLauncherSetup.rar
+          ls -lh download/DawnForgeLauncherSetup.rar
+
+      - name: Commit launcher package
+        run: |
+          git config user.name "DawnForge Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add download/DawnForgeLauncherSetup.rar
+          if git diff --cached --quiet; then
+            echo "Launcher package is already up to date."
+          else
+            git commit -m "Publish DawnForge launcher"
+            git push
+          fi
