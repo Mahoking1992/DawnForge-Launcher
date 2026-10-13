@@ -65,6 +65,7 @@ jobs:
           cp launcher/DawnForgeLauncher.exe download/DawnForgeLauncher.exe
           cd launcher
           zip -9 -j ../download/DawnForgeLauncherSetup.zip DawnForgeLauncher.exe
+          cp ../download/DawnForgeLauncherSetup.zip ../download/DawnForgeLauncherSetup_v1.0.11.zip
           cd ..
           SHA="$(sha256sum download/DawnForgeLauncher.exe | awk '{print $1}')"
           cat > download/launcher-update.json <<JSON
@@ -81,7 +82,7 @@ jobs:
         run: |
           git config user.name "DawnForge Bot"
           git config user.email "actions@users.noreply.github.com"
-          git add download/DawnForgeLauncher.exe download/DawnForgeLauncherSetup.zip download/launcher-update.json
+          git add download/DawnForgeLauncher.exe download/DawnForgeLauncherSetup.zip download/DawnForgeLauncherSetup_v1.0.11.zip download/launcher-update.json
           if git diff --cached --quiet; then
             echo "Generated launcher is already current."
           else
