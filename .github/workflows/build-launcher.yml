@@ -65,12 +65,12 @@ jobs:
           cp launcher/DawnForgeLauncher.exe download/DawnForgeLauncher.exe
           cd launcher
           zip -9 -j ../download/DawnForgeLauncherSetup.zip DawnForgeLauncher.exe
-          cp ../download/DawnForgeLauncherSetup.zip ../download/DawnForgeLauncherSetup_v1.0.11.zip
+          cp ../download/DawnForgeLauncherSetup.zip ../download/DawnForgeLauncherSetup_v1.0.12.zip
           cd ..
           SHA="$(sha256sum download/DawnForgeLauncher.exe | awk '{print $1}')"
           cat > download/launcher-update.json <<JSON
           {
-            "version": "1.0.11",
+            "version": "1.0.12",
             "url": "https://raw.githubusercontent.com/Mahoking1992/DawnForge-Launcher/main/download/DawnForgeLauncher.exe",
             "sha256": "$SHA"
           }
@@ -82,10 +82,10 @@ jobs:
         run: |
           git config user.name "DawnForge Bot"
           git config user.email "actions@users.noreply.github.com"
-          git add download/DawnForgeLauncher.exe download/DawnForgeLauncherSetup.zip download/DawnForgeLauncherSetup_v1.0.11.zip download/launcher-update.json
+          git add download/DawnForgeLauncher.exe download/DawnForgeLauncherSetup.zip download/DawnForgeLauncherSetup_v1.0.12.zip download/launcher-update.json
           if git diff --cached --quiet; then
             echo "Generated launcher is already current."
           else
-            git commit -m "Publish DawnForge Launcher v1.0.11"
+            git commit -m "Publish DawnForge Launcher v1.0.12"
             git push
           fi
