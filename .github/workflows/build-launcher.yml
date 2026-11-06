@@ -69,6 +69,9 @@ jobs:
           PY
           test "$(stat -c%s launcher/DawnForgeOriginal.exe)" = "8619520"
 
+      - name: Embed verified offline HD manifest for Classic switching
+        run: cp download/hd-manifest.json launcher/hd-manifest.json
+
       - name: Build Windows hover wrapper
         working-directory: launcher
         env:
