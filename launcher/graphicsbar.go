@@ -147,7 +147,7 @@ func newGraphicsBar(orig uintptr)(*graphicsBarState,error){
         uintptr(uint32(fontHeight)),0,0,0,650,0,0,0,
         1,0,0,0,0,uintptr(unsafe.Pointer(fontName)),
     )
-    b:=&graphicsBarState{hwnd:hwnd,original:orig,font:font,web:"?",login:"?",cdn:"?",chosen:"ORIGINAL",message:"CHOOSE GRAPHICS • THEN PLAY",width:1407,height:72}
+    b:=&graphicsBarState{hwnd:hwnd,original:orig,font:font,web:"?",login:"?",cdn:"?",chosen:"",message:"CHOOSE GRAPHICS • THEN PLAY",width:1407,height:72}
     graphicsBar=b
     return b,nil
 }
