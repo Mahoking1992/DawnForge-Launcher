@@ -105,6 +105,7 @@ var hits = []hitRect{
 
 func main() {
     runtime.LockOSThread()
+    if handleHDCommand() { return }
 
     if updateInstalledLauncher() { return }
 
