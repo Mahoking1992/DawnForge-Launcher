@@ -106,6 +106,8 @@ var hits = []hitRect{
 func main() {
     runtime.LockOSThread()
 
+    if updateInstalledLauncher() { return }
+
     installed, core, err := ensureInstalled()
     if err != nil {
         messageBoxFallback("DawnForge Launcher: " + err.Error())
