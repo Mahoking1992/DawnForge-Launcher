@@ -199,8 +199,8 @@ func ensureInstalled() (bool, string, error) {
         return false, "", errors.New("LOCALAPPDATA is unavailable")
     }
 
-    dir := filepath.Join(local, "DawnForge", "Launcher")
-    wrapper := filepath.Join(dir, "DawnForgeLauncher.exe")
+    dir := filepath.Join(local, "DawnForge", "LauncherTest")
+    wrapper := filepath.Join(dir, "DawnForgeLauncher-TEST.exe")
     core := filepath.Join(dir, "DawnForgeOriginal.exe")
 
     self, err := os.Executable()
@@ -220,7 +220,7 @@ func ensureInstalled() (bool, string, error) {
             return false, "", err
         }
 
-        createShortcuts(wrapper, core)
+        // No shortcut changes in the test build.
 
         c := exec.Command(wrapper)
         c.Dir = dir
@@ -237,7 +237,7 @@ func ensureInstalled() (bool, string, error) {
         }
     }
 
-    createShortcuts(wrapper, core)
+    // No shortcut changes in the test build.
     return false, core, nil
 }
 
