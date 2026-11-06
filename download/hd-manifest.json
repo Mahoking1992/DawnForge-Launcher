@@ -1,0 +1,71 @@
+{
+  "version": "1",
+  "base_url": "https://hd.dawnforge.eu",
+  "files": [
+    {
+      "name": "patch-A.mpq",
+      "size": 1744963792,
+      "sha256": "cc622c62d20680390cdd7075ddc3aab4f2c586fd07608c8e0e2acb9cef0936a1"
+    },
+    {
+      "name": "patch-B.mpq",
+      "size": 1608961816,
+      "sha256": "82758e1b95eb8fabd5defe7de35ae9babb1102e9d4bbf740dcdcbfd9a2fe1d01"
+    },
+    {
+      "name": "patch-C.mpq",
+      "size": 2083036611,
+      "sha256": "74557dfc1e82da9b66525a925ff49d36029b1a5612391e529e42c4d7ad0db48b"
+    },
+    {
+      "name": "patch-D.mpq",
+      "size": 1648472586,
+      "sha256": "ab46954bf0bbf0fa83ad0b0a3ab56f4392860b2d526b3275ba584ace420e5b06"
+    },
+    {
+      "name": "patch-E.mpq",
+      "size": 719685533,
+      "sha256": "7944a61ce1a3bd66a46a2eb05ab94ae99887d494092fa8ade0e5b79b66c2855d"
+    },
+    {
+      "name": "patch-G.mpq",
+      "size": 774538222,
+      "sha256": "6100c54ac0e8729f76d3f276881789175c6cd2899107d6fa3a6e4d0d66937df4"
+    },
+    {
+      "name": "patch-I.mpq",
+      "size": 162189904,
+      "sha256": "37944ef2ab661d59c5971d72eba6b8bc424d1a06d95352965d02854d9864a7b6"
+    },
+    {
+      "name": "patch-M.mpq",
+      "size": 189777174,
+      "sha256": "f9d3634165677c039b8197631471d15071a7fadc322aa7b84c0d754c55dd4c0f"
+    },
+    {
+      "name": "patch-N.mpq",
+      "size": 201362,
+      "sha256": "31dcd9f779ef1f4e9c4e71b5da58948781989f72c0454fa59fdd173947d24084"
+    },
+    {
+      "name": "patch-P.mpq",
+      "size": 7272085,
+      "sha256": "7d0f4d22362bc0923f1802980f0c18e09964a2021c79ea604dbdc6d51b550399"
+    },
+    {
+      "name": "patch-S.mpq",
+      "size": 262721653,
+      "sha256": "328d683683eea6d4237b6c5a86abc0a2049fbf9fe4a05ced8901b9d9e28d5bc5"
+    },
+    {
+      "name": "patch-T.mpq",
+      "size": 499342621,
+      "sha256": "f18553b0e1318b3d3e58c52c24f839bd43a39f86d2798a312256e6c066ece05d"
+    },
+    {
+      "name": "patch-U.mpq",
+      "size": 1662548731,
+      "sha256": "b768b829d6042dae6928fd95c41704907fe2ce4c952b54b9e8350b37c0537215"
+    }
+  ]
+}
