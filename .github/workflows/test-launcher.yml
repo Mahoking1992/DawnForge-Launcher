@@ -1,0 +1,51 @@
+name: Build test launcher (non-production)
+on:
+  push:
+    branches:
+      - feature/graphics-online-uptime
+    paths:
+      - "launcher/**"
+      - ".github/workflows/test-launcher.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23.x"
+      - name: Recover embedded original launcher (test only)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq p7zip-full
+          curl -fL --retry 3 "https://raw.githubusercontent.com/Mahoking1992/DawnForge-Launcher/main/download/DawnForgeLauncherSetup.rar" -o /tmp/DawnForgeLauncherSetup.rar
+          mkdir -p /tmp/df-original
+          7z x -y -o/tmp/df-original /tmp/DawnForgeLauncherSetup.rar >/dev/null
+          python3 - <<'PY'
+          from pathlib import Path
+          setup = Path("/tmp/df-original/DawnForgeLauncherSetup.exe").read_bytes()
+          core = setup[1004416:1004416+8619520]
+          if len(core)!=8619520 or core[:2]!=b'MZ':
+              raise SystemExit("Original launcher extraction failed")
+          Path("launcher/DawnForgeOriginal.exe").write_bytes(core)
+          PY
+      - name: Cross compile test launcher
+        working-directory: launcher
+        env:
+          GOOS: windows
+          GOARCH: amd64
+          CGO_ENABLED: "0"
+        run: |
+          gofmt -w main.go hd_status_panel.go
+          go build -trimpath -ldflags "-s -w -H=windowsgui" -o DawnForgeLauncher-TEST.exe .
+          test -s DawnForgeLauncher-TEST.exe
+          sha256sum DawnForgeLauncher-TEST.exe
+      - name: Upload test build artifact (not published)
+        uses: actions/upload-artifact@v4
+        with:
+          name: DawnForgeLauncher-TEST
+          path: launcher/DawnForgeLauncher-TEST.exe
+          retention-days: 7
