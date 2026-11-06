@@ -25,6 +25,10 @@ jobs:
         with:
           go-version: "1.23.x"
 
+      - name: Test HD package validation and safe activation
+        working-directory: launcher
+        run: go test ./internal/hd
+
       - name: Recover exact original DawnForge launcher
         run: |
           sudo apt-get update
