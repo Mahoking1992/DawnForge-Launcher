@@ -2,6 +2,8 @@ package main
 
 import (
     _ "embed"
+    "bytes"
+    "crypto/sha256"
     "errors"
     "fmt"
     "io"
@@ -194,50 +196,56 @@ func main() {
 }
 
 func ensureInstalled() (bool, string, error) {
+    // TEST BUILDS MUST NEVER REPLACE THEMSELVES.
+    // Windows locks running EXEs. Old test builds copied the downloaded EXE
+    // over a running %LOCALAPPDATA%\DawnForge\LauncherTest\DawnForgeLauncher-TEST.exe
+    // which caused "rename ... Access is denied" and blocked startup.
+    //
+    // Run the test wrapper from wherever it was extracted. Only materialize
+    // the embedded *original* launcher, never the test wrapper or shortcuts.
     local := os.Getenv("LOCALAPPDATA")
     if local == "" {
         return false, "", errors.New("LOCALAPPDATA is unavailable")
     }
-
     dir := filepath.Join(local, "DawnForge", "LauncherTest")
-    wrapper := filepath.Join(dir, "DawnForgeLauncher-TEST.exe")
-    core := filepath.Join(dir, "DawnForgeOriginal.exe")
-
-    self, err := os.Executable()
-    if err != nil {
+    if err := os.MkdirAll(dir, 0755); err != nil {
         return false, "", err
     }
-    self, _ = filepath.Abs(self)
 
-    if !samePath(self, wrapper) {
-        if err := os.MkdirAll(dir, 0755); err != nil {
-            return false, "", err
+    core := filepath.Join(dir, "DawnForgeOriginal.exe")
+    if data, err := os.ReadFile(core); err == nil {
+        if bytes.Equal(data, originalLauncher) {
+            return false, core, nil
         }
-        if err := copyFile(self, wrapper); err != nil {
-            return false, "", err
-        }
-        if err := os.WriteFile(core, originalLauncher, 0755); err != nil {
-            return false, "", err
-        }
-
-        // No shortcut changes in the test build.
-
-        c := exec.Command(wrapper)
-        c.Dir = dir
-        if err := c.Start(); err != nil {
-            return false, "", err
-        }
-        return true, core, nil
+        // An existing different version might still be in use.
+        // Never overwrite or delete it. Use a versioned file instead.
+        sum := sha256.Sum256(originalLauncher)
+        core = filepath.Join(dir, fmt.Sprintf("DawnForgeOriginal-%x.exe", sum[:8]))
+    } else if !os.IsNotExist(err) {
+        return false, "", fmt.Errorf("read original test core: %w", err)
     }
 
-    st, err := os.Stat(core)
-    if err != nil || st.Size() != int64(len(originalLauncher)) {
-        if err := os.WriteFile(core, originalLauncher, 0755); err != nil {
-            return false, "", err
+    if data, err := os.ReadFile(core); err == nil {
+        if bytes.Equal(data, originalLauncher) {
+            return false, core, nil
         }
+        return false, "", fmt.Errorf("existing test core does not match embedded launcher: %s", core)
+    } else if !os.IsNotExist(err) {
+        return false, "", fmt.Errorf("read test core: %w", err)
     }
 
-    // No shortcut changes in the test build.
+    // Exclusive creation prevents accidentally overwriting another process.
+    out, err := os.OpenFile(core, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0755)
+    if err != nil {
+        return false, "", fmt.Errorf("create original test core: %w", err)
+    }
+    _, writeErr := out.Write(originalLauncher)
+    closeErr := out.Close()
+    if writeErr != nil || closeErr != nil {
+        _ = os.Remove(core) // only the exclusively-created incomplete file
+        if writeErr != nil {return false, "", writeErr}
+        return false, "", closeErr
+    }
     return false, core, nil
 }
 
