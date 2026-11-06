@@ -6,7 +6,6 @@ package main
 
 import (
     "fmt"
-    "os/exec"
     "runtime"
     "sync"
     "syscall"
