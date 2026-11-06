@@ -80,6 +80,15 @@ jobs:
           test -s DawnForgeLauncher.exe
           sha256sum DawnForgeLauncher.exe
 
+      - name: Upload Windows test launcher
+        if: github.ref == 'refs/heads/feature/hd-r2-autoupdate'
+        uses: actions/upload-artifact@v4
+        with:
+          name: DawnForgeLauncher-v1.0.12-Windows-TEST
+          path: launcher/DawnForgeLauncher.exe
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Publish download files
         if: github.ref == 'refs/heads/main'
         run: |
