@@ -17,21 +17,10 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.23.x"
-      - name: Recover embedded original launcher (test only)
+      - name: Install icon compiler
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq p7zip-full binutils-mingw-w64-x86-64 gcc-mingw-w64-x86-64
-          curl -fL --retry 3 "https://raw.githubusercontent.com/Mahoking1992/DawnForge-Launcher/main/download/DawnForgeLauncherSetup.rar" -o /tmp/DawnForgeLauncherSetup.rar
-          mkdir -p /tmp/df-original
-          7z x -y -o/tmp/df-original /tmp/DawnForgeLauncherSetup.rar >/dev/null
-          python3 - <<'PY'
-          from pathlib import Path
-          setup = Path("/tmp/df-original/DawnForgeLauncherSetup.exe").read_bytes()
-          core = setup[1004416:1004416+8619520]
-          if len(core)!=8619520 or core[:2]!=b'MZ':
-              raise SystemExit("Original launcher extraction failed")
-          Path("launcher/DawnForgeOriginal.exe").write_bytes(core)
-          PY
+          sudo apt-get install -y -qq binutils-mingw-w64-x86-64 gcc-mingw-w64-x86-64
       - name: Embed the existing DawnForge icon in TEST executable
         working-directory: launcher
         run: |
@@ -50,7 +39,7 @@ jobs:
           Path('dawnforge.rc').write_text('1 ICON "dawnforge.ico"\n')
           PY
           x86_64-w64-mingw32-windres -I . -i dawnforge.rc -o rsrc_windows_amd64.syso -O coff
-      - name: Cross compile test launcher
+      - name: Cross compile lightweight test launcher
         working-directory: launcher
         env:
           GOOS: windows
