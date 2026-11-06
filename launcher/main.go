@@ -105,6 +105,9 @@ var hits = []hitRect{
 
 func main() {
     runtime.LockOSThread()
+    if handleHDCommand() { return }
+
+    if updateInstalledLauncher() { return }
 
     installed, core, err := ensureInstalled()
     if err != nil {
@@ -259,7 +262,10 @@ func copyFile(src, dst string) error {
 
 func createShortcuts(wrapper, iconSource string) {
     ps := fmt.Sprintf(
-        `$ws=New-Object -ComObject WScript.Shell; $d=[Environment]::GetFolderPath('Desktop'); $s=$ws.CreateShortcut((Join-Path $d 'DawnForge Launcher.lnk')); $s.TargetPath='%s'; $s.WorkingDirectory='%s'; $s.IconLocation='%s,0'; $s.Save(); $m=Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'; $s2=$ws.CreateShortcut((Join-Path $m 'DawnForge Launcher.lnk')); $s2.TargetPath='%s'; $s2.WorkingDirectory='%s'; $s2.IconLocation='%s,0'; $s2.Save()`,
+        `$ws=New-Object -ComObject WScript.Shell; $d=[Environment]::GetFolderPath('Desktop'); $s=$ws.CreateShortcut((Join-Path $d 'DawnForge Launcher.lnk')); $s.TargetPath='%s'; $s.WorkingDirectory='%s'; $s.IconLocation='%s,0'; $s.Save(); $m=Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'; $s2=$ws.CreateShortcut((Join-Path $m 'DawnForge Launcher.lnk')); $s2.TargetPath='%s'; $s2.WorkingDirectory='%s'; $s2.IconLocation='%s,0'; $s2.Save(); $s3=$ws.CreateShortcut((Join-Path $d 'DawnForge HD Graphics.lnk')); $s3.TargetPath='%s'; $s3.Arguments='--hd-manager'; $s3.WorkingDirectory='%s'; $s3.IconLocation='%s,0'; $s3.Save()`,
+        psQuote(wrapper),
+        psQuote(filepath.Dir(wrapper)),
+        psQuote(iconSource),
         psQuote(wrapper),
         psQuote(filepath.Dir(wrapper)),
         psQuote(iconSource),
