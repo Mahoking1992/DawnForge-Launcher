@@ -60,7 +60,7 @@ type dfPaintData struct {
     reserved [32]byte
 }
 type dfOptions struct { Mode string }
-type dfStatus struct { players, uptime string }
+type dfStatus struct { realm, players, uptime string }
 type dfPanel struct {
     hwnd uintptr
     playOverlay uintptr
@@ -69,6 +69,7 @@ type dfPanel struct {
     updates chan dfStatus
     errors chan string
     stop chan struct{}
+    realm string
     players string
     uptime string
     message string
@@ -92,11 +93,16 @@ func dfWindowProc(hwnd uintptr, msg uint32, wp, lp uintptr) uintptr {
             w := int(rc.Right)
             h := int(rc.Bottom)
             if w > 0 && h > 0 {
-                x := int(uint16(lp & 0xffff))*510/w
-                y := int(uint16((lp >> 16) & 0xffff))*96/h
-                if y >= 47 && y <= 91 {
-                    if x >= 112 && x < 297 {p.options.Mode="classic"}
-                    if x >= 299 && x <= 494 {p.options.Mode="hd"}
+                // One horizontal top info row, no controls in UPDATE's strip.
+                x := int(uint16(lp & 0xffff))*1140/w
+                y := int(uint16((lp >> 16) & 0xffff))*90/h
+                choice := ""
+                if y >= 19 && y <= 73 {
+                    if x >= 112 && x <= 264 { choice = "classic" }
+                    if x >= 271 && x <= 428 { choice = "hd" }
+                }
+                if choice != "" {
+                    p.options.Mode=choice
                     if err:=dfSaveOptions(p.options); err!=nil {p.message="Settings: "+err.Error()}
                     p.invalidate()
                 }
@@ -146,58 +152,62 @@ func (p *dfPanel) paint(dc uintptr) {
     dfGetClientRect.Call(p.hwnd,uintptr(unsafe.Pointer(&rc)))
     w,h:=int(rc.Right),int(rc.Bottom)
     if w<1 || h<1 {return}
-    sx:=func(n int)int{return n*w/510}
-    sy:=func(n int)int{return n*h/96}
-    sf:=func(n int)int {v:=n*h/96;if v<9 {return 9};return v}
-    bg:=rgb(17,17,20)
-    edge:=rgb(94,69,40)
-    gold:=rgb(223,176,87)
-    pale:=rgb(218,195,154)
-    muted:=rgb(154,137,111)
-    green:=rgb(81,212,115)
+    // New one-row info bar ABOVE the original INSTALL / UPDATE / PLAY strip.
+    // Only the previous GAME VERSION and REALM STATUS cards are covered.
+    // The WEBSITE button and the original animated UPDATE progress remain
+    // untouched in the original launcher.
+    sx:=func(n int)int{return n*w/1140}
+    sy:=func(n int)int{return n*h/90}
+    sf:=func(n int)int{v:=n*h/90;if v<9{return 9};return v}
+    edge:=rgb(101,72,37)
+    gold:=rgb(230,182,90)
+    pale:=rgb(220,201,166)
+    muted:=rgb(169,149,116)
+    green:=rgb(69,220,103)
+    bg:=rgb(15,17,20)
 
-    // Flat dark stone strip, bronze inset, no stock white controls.
-    dfRect(dc,0,0,w,h,bg)
-    dfRect(dc,0,0,w,sy(2),edge)
-    dfRect(dc,0,h-sy(2),w,sy(2),edge)
-    dfRect(dc,0,0,sx(2),h,edge)
-    dfRect(dc,w-sx(2),0,sx(2),h,edge)
-    dfRect(dc,sx(14),sy(43),sx(482),sy(1),edge)
+    // Four dark, bronze-framed segments on the existing information row.
+    dfRect(dc,0,0,w,h,edge)
+    dfRect(dc,sx(3),sy(3),w-sx(6),h-sy(6),bg)
+    for _,pos:=range []int{444,666,898} {
+        dfRect(dc,sx(pos),sy(10),sx(2),sy(70),edge)
+    }
 
-    online:="PLAYERS ONLINE"
-    value:=p.players
-    if value=="" {value="--"}
-    up:=p.uptime
-    if up=="" {up="--"}
+    // Replaces the old GAME VERSION card at the left.
+    dfText(dc,"GRAPHICS",sx(18),sy(20),sx(94),sy(44),sf(15),700,pale,false)
+    modeButton:=func(x,bw int,label string,selected bool) {
+        border,fill,ink:=edge,rgb(32,31,30),muted
+        if selected {border,fill,ink=gold,rgb(72,48,26),gold}
+        dfRect(dc,sx(x),sy(19),sx(bw),sy(54),border)
+        dfRect(dc,sx(x+2),sy(21),sx(bw-4),sy(50),fill)
+        if selected {dfRect(dc,sx(x+7),sy(68),sx(bw-14),sy(2),gold)}
+        dfText(dc,label,sx(x+4),sy(23),sx(bw-8),sy(42),sf(15),700,ink,true)
+    }
+    modeButton(112,152,"CLASSIC",p.options.Mode!="hd")
+    modeButton(271,157,"ULTRA HD",p.options.Mode=="hd")
+
+    // Realm status, live players and uptime, all in this same horizontal row.
+    realm:=p.realm
+    if realm=="" {realm="--"}
+    dfText(dc,"REALM STATUS",sx(454),sy(8),sx(202),sy(30),sf(15),700,pale,true)
+    realmColor:=muted
+    if realm=="ONLINE"{realmColor=green}
+    dfText(dc,realm,sx(454),sy(36),sx(202),sy(44),sf(23),700,realmColor,true)
+
     if p.message!="" {
-        dfText(dc,p.message,sx(19),sy(7),sx(471),sy(32),sf(13),600,gold,false)
+        dfText(dc,p.message,sx(678),sy(14),sx(442),sy(63),sf(14),700,gold,false)
     } else {
-        dfText(dc,online,sx(18),sy(8),sx(150),sy(28),sf(12),700,muted,false)
-        dfText(dc,value,sx(173),sy(8),sx(70),sy(28),sf(17),700,green,false)
-        dfText(dc,"UPTIME",sx(262),sy(8),sx(69),sy(28),sf(12),700,muted,false)
-        dfText(dc,up,sx(336),sy(8),sx(154),sy(28),sf(14),700,pale,false)
+        players:=p.players
+        if players==""{players="--"}
+        uptime:=p.uptime
+        if uptime==""{uptime="--"}
+        dfText(dc,"PLAYERS ONLINE",sx(678),sy(8),sx(208),sy(30),sf(14),700,pale,true)
+        dfText(dc,players,sx(678),sy(36),sx(208),sy(44),sf(23),700,green,true)
+        dfText(dc,"UPTIME",sx(910),sy(8),sx(218),sy(30),sf(14),700,pale,true)
+        dfText(dc,uptime,sx(910),sy(36),sx(218),sy(44),sf(20),700,pale,true)
     }
-
-    dfText(dc,"GRAPHICS",sx(18),sy(55),sx(92),sy(27),sf(12),700,pale,false)
-    dfModeButton:=func(x,bw int,label string,selected bool) {
-        border:=edge
-        fill:=rgb(36,33,32)
-        ink:=muted
-        if selected {
-            border=gold
-            fill=rgb(69,47,24)
-            ink=gold
-        }
-        dfRect(dc,sx(x),sy(52),sx(bw),sy(35),border)
-        dfRect(dc,sx(x+2),sy(54),sx(bw-4),sy(31),fill)
-        if selected {
-            dfRect(dc,sx(x+9),sy(84),sx(bw-18),sy(2),gold)
-        }
-        dfText(dc,label,sx(x+5),sy(54),sx(bw-10),sy(30),sf(14),700,ink,true)
-    }
-    dfModeButton(113,177,"CLASSIC",p.options.Mode!="hd")
-    dfModeButton(298,197,"ULTRA HD",p.options.Mode=="hd")
 }
+
 func (p *dfPanel) invalidate() {
     if p!=nil && p.hwnd!=0 {dfInvalidateRect.Call(p.hwnd,0,0)}
 }
@@ -241,7 +251,7 @@ func dfCreatePanel(parent uintptr) (*dfPanel,error) {
     }
     currentDF=p
     p.hwnd,_,_=dfCreateWindow.Call(WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE,
-        uintptr(unsafe.Pointer(class)),0,WS_POPUP,0,0,510,96,0,0,inst,0)
+        uintptr(unsafe.Pointer(class)),0,WS_POPUP,0,0,1140,90,0,0,inst,0)
     if p.hwnd==0 {currentDF=nil;return nil,fmt.Errorf("create styled status panel failed")}
     p.playOverlay,_,_=dfCreateWindow.Call(WS_EX_LAYERED|WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE,
         uintptr(unsafe.Pointer(class)),0,WS_POPUP,0,0,1,1,0,0,inst,0)
@@ -265,7 +275,7 @@ func dfPump() {
 func (p *dfPanel) tick() {
     select {
     case stat:=<-p.updates:
-        p.players,p.uptime=stat.players,stat.uptime
+        p.realm,p.players,p.uptime=stat.realm,stat.players,stat.uptime
         p.message=""
         p.invalidate()
     default:
@@ -288,11 +298,13 @@ func (p *dfPanel) tick() {
     }
     w,h:=int(r.Right-r.Left),int(r.Bottom-r.Top)
     if w<=0 || h<=0{return}
-    // Precisely the original center install/update information strip.
-    x:=int(r.Left)+388*w/baseW
-    y:=int(r.Top)+711*h/baseH
-    pw:=510*w/baseW
-    ph:=96*h/baseH
+    // Reuse ONLY the upper information row (GAME VERSION + REALM STATUS).
+    // Original update progress strip begins at y=711; it stays fully visible.
+    // Leave the WEBSITE button at x>=1175 uncovered and clickable.
+    x:=int(r.Left)+26*w/baseW
+    y:=int(r.Top)+615*h/baseH
+    pw:=1140*w/baseW
+    ph:=90*h/baseH
     procSetWindowPos.Call(p.hwnd,hwndTop,uintptr(x),uintptr(y),
         uintptr(pw),uintptr(ph),SWP_NOACTIVATE|SWP_SHOWWINDOW)
     procShowWindow.Call(p.hwnd,SW_SHOWNOACTIVATE)
@@ -323,7 +335,7 @@ func (p *dfPanel) poll() {
     ticker:=time.NewTicker(30*time.Second)
     defer ticker.Stop()
     for {
-        online,up:="--","--"
+        realm,online,up:="--","--","--"
         req,err:=http.NewRequest(http.MethodGet,"https://dawnforge.eu/api/status",nil)
         if err==nil {
             resp,err:=client.Do(req)
@@ -335,12 +347,15 @@ func (p *dfPanel) poll() {
                         uptime,oku:=dfNumber(raw,"uptimeSeconds","worldUptimeSeconds")
                         if okp && players>=0 {online=fmt.Sprint(players)}
                         if oku && uptime>=0 {up=fmt.Sprintf("%dh %02dm",uptime/3600,(uptime%3600)/60)}
+                        // Live data is a stronger signal than a static label.
+                        // Unknown is not mislabeled OFFLINE when API data is missing.
+                        if okp && oku && uptime>=0 {realm="ONLINE"}
                     }
                 }
                 resp.Body.Close()
             }
         }
-        select {case p.updates<-dfStatus{players:online,uptime:up}:default:}
+        select {case p.updates<-dfStatus{realm:realm,players:online,uptime:up}:default:}
         select {case <-p.stop:return;case <-ticker.C:}
     }
 }
