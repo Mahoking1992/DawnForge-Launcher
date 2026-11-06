@@ -1,7 +1,6 @@
 package main
 
 import (
-    _ "embed"
     "errors"
     "fmt"
     "io"
@@ -21,8 +20,8 @@ const (
     baseH   = 972
 )
 
-//go:embed DawnForgeOriginal.exe
-var originalLauncher []byte
+// TEST wrapper loads an already-installed original DawnForge client read-only.
+// Production packaging will bundle that client again after final approval.
 
 var (
     user32   = syscall.NewLazyDLL("user32.dll")
@@ -141,6 +140,13 @@ func main() {
         }
     }()
 
+    // TEST BRANCH ONLY: show text-only status and graphics selection without
+    // modifying the embedded original launcher executable.
+    panel, panelErr := dfCreatePanel(originalHwnd)
+    if panelErr == nil && panel != nil {
+        defer panel.close()
+    }
+
     done := make(chan struct{})
     go func() {
         _ = cmd.Wait()
@@ -157,6 +163,8 @@ func main() {
             procShowWindow.Call(overlay, SW_HIDE)
             return
         case <-tick.C:
+            dfPump()
+            if panel != nil { panel.tick() }
             idx, r, ok := hoveredRect(originalHwnd)
             if !ok {
                 if last != -1 {
@@ -185,51 +193,32 @@ func main() {
 }
 
 func ensureInstalled() (bool, string, error) {
+    // No self-install, no EXE replacement, no shortcut creation.
+    // Re-use the *already installed* original launcher in read-only mode.
+    // This is only for testing on a PC that already runs DawnForge.
     local := os.Getenv("LOCALAPPDATA")
-    if local == "" {
-        return false, "", errors.New("LOCALAPPDATA is unavailable")
+    if local == "" {return false, "", errors.New("LOCALAPPDATA is unavailable")}
+    candidates := []string{
+        filepath.Join(local, "DawnForge", "LauncherTest", "DawnForgeOriginal.exe"),
+        filepath.Join(local, "DawnForge", "Launcher", "DawnForgeOriginal.exe"),
     }
+    // Previous test versions may have put a versioned core under LauncherTest.
+    matches, _ := filepath.Glob(filepath.Join(local, "DawnForge", "LauncherTest", "DawnForgeOriginal-*.exe"))
+    candidates = append(candidates, matches...)
 
-    dir := filepath.Join(local, "DawnForge", "Launcher")
-    wrapper := filepath.Join(dir, "DawnForgeLauncher.exe")
-    core := filepath.Join(dir, "DawnForgeOriginal.exe")
-
-    self, err := os.Executable()
-    if err != nil {
-        return false, "", err
-    }
-    self, _ = filepath.Abs(self)
-
-    if !samePath(self, wrapper) {
-        if err := os.MkdirAll(dir, 0755); err != nil {
-            return false, "", err
-        }
-        if err := copyFile(self, wrapper); err != nil {
-            return false, "", err
-        }
-        if err := os.WriteFile(core, originalLauncher, 0755); err != nil {
-            return false, "", err
-        }
-
-        createShortcuts(wrapper, core)
-
-        c := exec.Command(wrapper)
-        c.Dir = dir
-        if err := c.Start(); err != nil {
-            return false, "", err
-        }
-        return true, core, nil
-    }
-
-    st, err := os.Stat(core)
-    if err != nil || st.Size() != int64(len(originalLauncher)) {
-        if err := os.WriteFile(core, originalLauncher, 0755); err != nil {
-            return false, "", err
+    for _, core := range candidates {
+        file, err := os.Open(core)
+        if err != nil {continue}
+        stat, err := file.Stat()
+        header := make([]byte,2)
+        _, readErr := io.ReadFull(file,header)
+        _ = file.Close()
+        if err == nil && readErr == nil && stat.Size() == 8619520 &&
+            header[0] == 'M' && header[1] == 'Z' {
+            return false, core, nil
         }
     }
-
-    createShortcuts(wrapper, core)
-    return false, core, nil
+    return false, "", errors.New("Original DawnForge launcher not found. Run the installed DawnForge launcher first. No files were changed.")
 }
 
 func copyFile(src, dst string) error {
