@@ -19,6 +19,9 @@ import (
 //go:embed hd-manager.ps1
 var hdManagerScript string
 
+//go:embed hd-manifest.json
+var pinnedHDManifest []byte
+
 const hdManifestURL = "https://raw.githubusercontent.com/Mahoking1992/DawnForge-Launcher/main/download/hd-manifest.json"
 
 type hdSettings struct { GameDir string `json:"game_dir"` }
@@ -50,9 +53,15 @@ func hdTask(mode string,gameDir string)error{
  }
  ctx,cancel:=context.WithTimeout(context.Background(),6*time.Hour)
  defer cancel()
- manifest,err:=hd.FetchManifest(ctx,hdManifestURL);if err!=nil{
-  return fmt.Errorf("HD package not published yet: %w",err)
+ var manifest hd.Manifest
+ var err error
+ if mode=="--vanilla-mode"{
+  // Vanilla switch must work without network connectivity.
+  manifest,err=hd.ParseManifest(pinnedHDManifest)
+ }else{
+  manifest,err=hd.FetchManifest(ctx,hdManifestURL)
  }
+ if err!=nil{return fmt.Errorf("HD manifest unavailable: %w",err)}
  manager:=hd.Manager{GameDir:gameDir,Manifest:manifest,Progress:func(n string,current,total int64){
   fmt.Printf("\r%s %d%% (%d/%d bytes)  ",n,current*100/total,current,total)
  }}
