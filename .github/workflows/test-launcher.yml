@@ -20,7 +20,7 @@ jobs:
       - name: Recover embedded original launcher (test only)
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq p7zip-full
+          sudo apt-get install -y -qq p7zip-full binutils-mingw-w64-x86-64
           curl -fL --retry 3 "https://raw.githubusercontent.com/Mahoking1992/DawnForge-Launcher/main/download/DawnForgeLauncherSetup.rar" -o /tmp/DawnForgeLauncherSetup.rar
           mkdir -p /tmp/df-original
           7z x -y -o/tmp/df-original /tmp/DawnForgeLauncherSetup.rar >/dev/null
@@ -32,6 +32,24 @@ jobs:
               raise SystemExit("Original launcher extraction failed")
           Path("launcher/DawnForgeOriginal.exe").write_bytes(core)
           PY
+      - name: Embed the existing DawnForge icon in TEST executable
+        working-directory: launcher
+        run: |
+          python3 - <<'PY'
+          import base64, struct
+          from pathlib import Path
+          png=base64.b64decode(Path('icon64.b64').read_text().strip())
+          if png[:8] != b'\x89PNG\r\n\x1a\n':
+              raise SystemExit('Existing launcher icon is not a PNG')
+          width,height=struct.unpack('>II',png[16:24])
+          if (width,height)!=(64,64):
+              raise SystemExit(f'Unexpected icon size: {width}x{height}')
+          header=struct.pack('<HHH',0,1,1)
+          entry=struct.pack('<BBBBHHII',64,64,0,0,1,32,len(png),22)
+          Path('dawnforge.ico').write_bytes(header+entry+png)
+          Path('dawnforge.rc').write_text('1 ICON "dawnforge.ico"\n')
+          PY
+          x86_64-w64-mingw32-windres -I . -i dawnforge.rc -o rsrc_windows_amd64.syso -O coff
       - name: Cross compile test launcher
         working-directory: launcher
         env:
