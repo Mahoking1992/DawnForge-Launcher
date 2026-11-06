@@ -15,6 +15,7 @@ import (
  "regexp"
  "strings"
  "time"
+ "syscall"
 )
 
 type dfHDXML struct {
@@ -60,7 +61,9 @@ func dfFindTestClient() (string,error) {
  return "",errors.New(`HD test copy not found in C:\ (expected C:\wow – kópia)`)
 }
 func dfSubst(root string) (string,error) {
- content,_:=exec.Command("subst.exe").CombinedOutput()
+ listCmd:=exec.Command("subst.exe")
+ listCmd.SysProcAttr=&syscall.SysProcAttr{HideWindow:true,CreationFlags:0x08000000}
+ content,_:=listCmd.CombinedOutput()
  re:=regexp.MustCompile(`(?m)^([A-Za-z]):\\: => (.*?)\r?$`)
  for _,match:=range re.FindAllStringSubmatch(string(content),-1) {
   if strings.EqualFold(strings.TrimRight(match[2],`\`),strings.TrimRight(root,`\`)) {
@@ -70,13 +73,24 @@ func dfSubst(root string) (string,error) {
  for _,letter:=range "ZYXWVUTSR" {
   drive:=string(letter)+":"
   if _,err:=os.Stat(drive+`\`);err==nil {continue}
-  if err:=exec.Command("subst.exe",drive,root).Run();err==nil{return drive,nil}
+  if err:=func()error{cmd:=exec.Command("subst.exe",drive,root);cmd.SysProcAttr=&syscall.SysProcAttr{HideWindow:true,CreationFlags:0x08000000};return cmd.Run()}();err==nil{return drive,nil}
  }
  return "",errors.New("No available Windows drive letter for HD test")
 }
+func dfHDLog(entry string) {
+ dir:=filepath.Join(os.Getenv("LOCALAPPDATA"),"DawnForge","LauncherTest")
+ if err:=os.MkdirAll(dir,0700);err!=nil{return}
+ f,err:=os.OpenFile(filepath.Join(dir,"hd-launch.log"),os.O_CREATE|os.O_APPEND|os.O_WRONLY,0600)
+ if err!=nil{return}
+ defer f.Close()
+ fmt.Fprintf(f,"%s %s\n",time.Now().Format(time.RFC3339),entry)
+}
+
 func dfLaunchHD() error {
+ dfHDLog("HD PLAY pressed")
  root,err:=dfFindTestClient()
- if err!=nil{return err}
+ if err!=nil{dfHDLog("No test client: "+err.Error());return err}
+ dfHDLog("HD test client: "+root)
  if strings.EqualFold(filepath.Clean(root),filepath.Clean(`C:\wow`)) {
   return errors.New(`HD test refuses to alter original C:\wow`)
  }
@@ -103,7 +117,8 @@ func dfLaunchHD() error {
   }
  }
  drive,err:=dfSubst(root)
- if err!=nil{return err}
+ if err!=nil{dfHDLog("Subst error: "+err.Error());return err}
+ dfHDLog("Subst drive: "+drive)
  exeHash,err:=dfHash(exe)
  if err!=nil{return err}
  x:=dfHDXML{
@@ -122,10 +137,14 @@ func dfLaunchHD() error {
   backup:=filepath.Join(setup,fmt.Sprintf("config-before-launcher-test-%d.xml",time.Now().UnixNano()))
   if err:=os.WriteFile(backup,old,0600);err!=nil{return err}
  }
- if err:=os.WriteFile(config,data,0600);err!=nil{return err}
+ if err:=os.WriteFile(config,data,0600);err!=nil{dfHDLog("Config write: "+err.Error());return err}
+ dfHDLog("Wowreeb config ready")
  cmd:=exec.Command(loader)
  cmd.Dir=setup
  cmd.Env=append(os.Environ(),"WOWREEB_ENTRY=DawnForge HD Test")
- if err:=cmd.Start();err!=nil{return err}
- return cmd.Process.Release()
+ cmd.SysProcAttr=&syscall.SysProcAttr{HideWindow:true}
+ if err:=cmd.Start();err!=nil{dfHDLog("Wowreeb launch: "+err.Error());return err}
+ dfHDLog(fmt.Sprintf("Wowreeb started, PID %d",cmd.Process.Pid))
+ go func(){if err:=cmd.Wait();err!=nil{dfHDLog("Wowreeb exit error: "+err.Error())}else{dfHDLog("Wowreeb exited normally")}}()
+ return nil
 }
