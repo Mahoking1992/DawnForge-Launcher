@@ -3,6 +3,7 @@ package main
 // HD play support for the local TEST client only. No automatic game downloads,
 // file deletion, registry changes, or modifications to the original client.
 import (
+ "bytes"
  "crypto/sha256"
  "encoding/hex"
  "encoding/xml"
@@ -108,51 +109,96 @@ func dfHDLog(entry string) {
  fmt.Fprintf(f,"%s %s\n",time.Now().Format(time.RFC3339),entry)
 }
 
-type dfGameConfig struct {
- XMLName xml.Name `xml:"wowreeb"`
- Realms []struct {
-  Name string `xml:"Name,attr"`
-  Exe struct {Path string `xml:"Path,attr"`} `xml:"Exe"`
-  DLLs []struct {Path string `xml:"Path,attr"`} `xml:"DLL"`
-  AuthServer struct {Host string `xml:"Host,attr"`} `xml:"AuthServer"`
- } `xml:"Realm"`
+// wowreeb 3.5 uses narrow filesystem paths in several Windows calls.
+// Never launch it from the accented HD game directory. Build a read-only-to-game
+// copy of the official loader in a per-version ASCII-only test directory.
+// This deliberately does not restore or overwrite any previous game config.
+func dfIsASCII(s string) bool {
+ for _,r:=range s {if r>127{return false}}
+ return true
 }
-
-func dfLocalHDConfig(setup,root string) (string,error) {
- configPath:=filepath.Join(setup,"config.xml")
- raw,err:=os.ReadFile(configPath)
- if err!=nil{return "",fmt.Errorf("Cannot read wowreeb config: %w",err)}
- var parsed dfGameConfig
- if err:=xml.Unmarshal(raw,&parsed);err!=nil{return "",fmt.Errorf("Invalid wowreeb config.xml: %w",err)}
- if parsed.XMLName.Local!="wowreeb" || len(parsed.Realms)==0 {
-  return "",errors.New("wowreeb config.xml has no valid Realm entries")
+func dfStageFile(source,destination string) error {
+ data,err:=os.ReadFile(source)
+ if err!=nil{return err}
+ if existing,err:=os.ReadFile(destination);err==nil {
+  if bytes.Equal(existing,data){return nil}
+  return fmt.Errorf("staged file differs; refusing to overwrite %s",destination)
+ } else if !os.IsNotExist(err){return err}
+ f,err:=os.OpenFile(destination,os.O_WRONLY|os.O_CREATE|os.O_EXCL,0600)
+ if err!=nil{return err}
+ n,e:=f.Write(data)
+ ce:=f.Close()
+ if e!=nil || ce!=nil || n!=len(data) {
+  _=os.Remove(destination)
+  if e!=nil{return e}
+  if ce!=nil{return ce}
+  return io.ErrShortWrite
  }
- gameFile,err:=os.Stat(filepath.Join(root,"WoW.exe"))
- if err!=nil{return "",err}
- for _,realm:=range parsed.Realms {
-  if realm.Name=="" || realm.Exe.Path=="" {continue}
-  configured,err:=os.Stat(realm.Exe.Path)
-  if err!=nil || !os.SameFile(configured,gameFile) {continue}
-  // AuthServer is optional in official wowreeb. An absent override means
-  // wowreeb should not be rejected solely because the client uses realmlist.wtf.
-  // The previous guard was incorrect. Do not synthesize or overwrite config.xml.
-  if realm.AuthServer.Host=="" {
-   dfHDLog("No AuthServer override in wowreeb entry; allowing existing client realmlist")
-  }
-  helperFound:=false
-  for _,dll:=range realm.DLLs {
-   if strings.EqualFold(filepath.Base(strings.ReplaceAll(dll.Path,"\\","/")),"VanillaHelpers.dll") {
-    dllStat,err:=os.Stat(dll.Path)
-    expected,err2:=os.Stat(filepath.Join(root,"VanillaHelpers.dll"))
-    if err==nil && err2==nil && os.SameFile(dllStat,expected) {helperFound=true;break}
-   }
-  }
-  if !helperFound {
-   return "",fmt.Errorf("wowreeb entry %q does not load the verified HD VanillaHelpers.dll. Restore the working config instead of regenerating it",realm.Name)
-  }
-  return realm.Name,nil
+ return nil
+}
+type dfWowreebConfig struct {
+ XMLName xml.Name `xml:"wowreeb"`
+ Config []struct {Name string `xml:"Name,attr"`; Value string `xml:"Value,attr"`} `xml:"Config"`
+ Realms []dfWowreebRealm `xml:"Realm"`
+}
+type dfWowreebRealm struct {
+ Name string `xml:"Name,attr"`
+ Exe struct {Path string `xml:"Path,attr"`; SHA256 string `xml:"SHA256,attr"`} `xml:"Exe"`
+ DLLs []struct {Path string `xml:"Path,attr"`} `xml:"DLL"`
+}
+func dfPrepareASCIILoader(sourceSetup,gameRoot,drive string) (string,string,error) {
+ sourceEXE:=filepath.Join(sourceSetup,"wowreeb32.exe")
+ sourceDLL:=filepath.Join(sourceSetup,"wowreeb32.dll")
+ exeHash,err:=dfHash(sourceEXE)
+ if err!=nil{return "","",err}
+ dllHash,err:=dfHash(sourceDLL)
+ if err!=nil{return "","",err}
+ gameHash,err:=dfHash(filepath.Join(gameRoot,"WoW.exe"))
+ if err!=nil{return "","",err}
+ // No secrets, usernames, spaces, accents, Unicode punctuation, or redirects.
+ local:=os.Getenv("LOCALAPPDATA")
+ if !dfIsASCII(local) || local=="" {
+  return "","",errors.New("Windows LOCALAPPDATA path is not ASCII; choose an ASCII-only test directory before HD launcher testing")
  }
- return "",errors.New("No wowreeb Realm points to the HD test client's WoW.exe. The original config was not modified")
+ session:=filepath.Join(local,"DawnForge","LauncherTest","HDLoader",exeHash[:12]+"-"+dllHash[:12]+"-"+gameHash[:8])
+ if !dfIsASCII(session){return "","",errors.New("Test loader path contains unsupported characters")}
+ if err:=os.MkdirAll(session,0700);err!=nil{return "","",err}
+ if err:=dfStageFile(sourceEXE,filepath.Join(session,"wowreeb32.exe"));err!=nil{return "","",err}
+ if err:=dfStageFile(sourceDLL,filepath.Join(session,"wowreeb32.dll"));err!=nil{return "","",err}
+ const entry="DawnForge HD Test"
+ cfg:=dfWowreebConfig{}
+ cfg.Config=append(cfg.Config,struct {
+  Name string `xml:"Name,attr"`
+  Value string `xml:"Value,attr"`
+ }{Name:"ClearWDB",Value:"0"})
+ realm:=dfWowreebRealm{Name:entry}
+ realm.Exe.Path=drive+`\WoW.exe`
+ realm.Exe.SHA256=gameHash
+ realm.DLLs=append(realm.DLLs,struct{Path string `xml:"Path,attr"`}{Path:drive+`\VanillaHelpers.dll`})
+ cfg.Realms=[]dfWowreebRealm{realm}
+ data,err:=xml.MarshalIndent(cfg,"","  ")
+ if err!=nil{return "","",err}
+ data=append([]byte(xml.Header),data...)
+ configPath:=filepath.Join(session,"config.xml")
+ if err:=dfStageBytes(data,configPath);err!=nil{return "","",err}
+ dfHDLog("Created isolated ASCII wowreeb session "+session)
+ return session,entry,nil
+}
+func dfStageBytes(data []byte,destination string) error {
+ if old,err:=os.ReadFile(destination);err==nil {
+  if bytes.Equal(old,data){return nil}
+  return fmt.Errorf("isolated config already exists with different content: %s",destination)
+ } else if !os.IsNotExist(err){return err}
+ f,err:=os.OpenFile(destination,os.O_WRONLY|os.O_CREATE|os.O_EXCL,0600)
+ if err!=nil{return err}
+ _,e:=f.Write(data)
+ ce:=f.Close()
+ if e!=nil || ce!=nil {
+  _=os.Remove(destination)
+  if e!=nil{return e}
+  return ce
+ }
+ return nil
 }
 func dfLaunchHD() error {
  dfHDLog("HD PLAY pressed")
@@ -188,11 +234,11 @@ func dfLaunchHD() error {
  drive,err:=dfSubst(root)
  if err!=nil {dfHDLog("Virtual drive: "+err.Error());return err}
  dfHDLog("HD virtual drive: "+drive)
- entry,err:=dfLocalHDConfig(setup,root)
- if err!=nil{dfHDLog("Preflight: "+err.Error());return err}
- dfHDLog("Using original, unmodified wowreeb config and entry: "+entry)
- cmd:=exec.Command(loader)
- cmd.Dir=setup
+ session,entry,err:=dfPrepareASCIILoader(setup,root,drive)
+ if err!=nil{dfHDLog("ASCII loader preparation: "+err.Error());return err}
+ dfHDLog("HD game and original wowreeb config remain unchanged")
+ cmd:=exec.Command(filepath.Join(session,"wowreeb32.exe"))
+ cmd.Dir=session
  cmd.Env=append(os.Environ(),"WOWREEB_ENTRY="+entry)
  cmd.SysProcAttr=&syscall.SysProcAttr{HideWindow:true}
  if err:=cmd.Start();err!=nil {dfHDLog("Start failed: "+err.Error());return err}
