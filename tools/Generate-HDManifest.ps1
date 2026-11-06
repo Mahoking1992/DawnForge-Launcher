@@ -19,7 +19,8 @@ $files=@(foreach($name in $names){
  [ordered]@{name=$name;size=[int64]$item.Length;sha256=$hash}
 })
 $manifest=[ordered]@{version='1';base_url=$PublicBaseUrl.TrimEnd('/');files=$files}
-$manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $OutputPath -Encoding UTF8
+$json = $manifest | ConvertTo-Json -Depth 5
+[System.IO.File]::WriteAllText($OutputPath, $json, (New-Object System.Text.UTF8Encoding($false)))
 Write-Host "Manifest created: $OutputPath"
 Write-Host "Objects: $($files.Count); Total bytes: $(($files|Measure-Object -Property size -Sum).Sum)"
 Write-Host 'VERIFY: Each public URL must be accessible without login before publishing the launcher.'
