@@ -18,6 +18,7 @@ const (
  dfWSVisible = 0x10000000
  dfWSChild = 0x40000000
  dfWMCommand = 0x0111
+ dfWMLButtonUp = 0x0202
  dfPMRemove = 0x0001
  dfWMSetFont = 0x0030
  dfSWShow = 4
@@ -50,7 +51,9 @@ type dfPanel struct {
  status uintptr
  classic uintptr
  ultra uintptr
+ playOverlay uintptr
  parent uintptr
+ clicks chan int
  options dfOptions
  updates chan string
  stop chan struct{}
@@ -58,6 +61,10 @@ type dfPanel struct {
 var currentDF *dfPanel
 
 func dfWindowProc(hwnd uintptr, msg uint32, wp, lp uintptr) uintptr {
+ if msg == dfWMLButtonUp && currentDF != nil && hwnd == currentDF.playOverlay {
+  select { case currentDF.clicks <- 103: default: }
+  return 0
+ }
  if msg == dfWMCommand && currentDF != nil && hwnd == currentDF.hwnd {
   choice := int(wp & 0xffff)
   if choice == 101 || choice == 102 {
@@ -123,7 +130,7 @@ func (p *dfPanel) setSelected() {
 }
 
 func dfCreatePanel(parent uintptr) (*dfPanel,error) {
- p:=&dfPanel{parent:parent,options:dfReadOptions(),updates:make(chan string,1),stop:make(chan struct{})}
+ p:=&dfPanel{parent:parent,options:dfReadOptions(),updates:make(chan string,1),clicks:make(chan int,4),stop:make(chan struct{})}
  inst,_,_:=procGetModuleHandleW.Call(0)
  cls:=utf16Ptr("DawnForgeTextStatusGraphicsV1")
  wc:=WNDCLASSEX{CbSize:uint32(unsafe.Sizeof(WNDCLASSEX{})),
@@ -142,6 +149,8 @@ func dfCreatePanel(parent uintptr) (*dfPanel,error) {
  p.classic=dfChild(p.hwnd,"BUTTON","CLASSIC",108,43,170,32,101)
  p.ultra=dfChild(p.hwnd,"BUTTON","ULTRA HD",283,43,195,32,102)
  p.setSelected()
+ p.playOverlay,_,_=dfCreateWindow.Call(WS_EX_LAYERED|WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE,uintptr(unsafe.Pointer(cls)),0,WS_POPUP,0,0,1,1,0,0,inst,0)
+ if p.playOverlay!=0 {procSetLayeredWindowAttributes.Call(p.playOverlay,0,1,LWA_ALPHA);procShowWindow.Call(p.playOverlay,SW_HIDE)}
  procShowWindow.Call(p.hwnd,SW_HIDE)
  go p.poll()
  return p,nil
@@ -158,6 +167,13 @@ func dfPump() {
 }
 
 func (p *dfPanel) tick() {
+ select {
+ case event:=<-p.clicks:
+  if event==103 {
+   go func(){if err:=dfLaunchHD();err!=nil {dfSetText(p.status,"HD TEST ERROR: "+err.Error())}}()
+  }
+ default:
+ }
  select {case s:= <-p.updates: dfSetText(p.status,s);default:}
  var r RECT
  if ok,_,_:=procGetWindowRect.Call(p.parent,uintptr(unsafe.Pointer(&r)));ok==0 {return}
@@ -167,6 +183,7 @@ func (p *dfPanel) tick() {
  // A click on the panel itself must not immediately hide it.
  if vis==0 || ico!=0 || (fg!=p.parent && fg!=p.hwnd) {
   procShowWindow.Call(p.hwnd,SW_HIDE)
+  if p.playOverlay!=0 {procShowWindow.Call(p.playOverlay,SW_HIDE)}
   return
  }
  w:=int(r.Right-r.Left)
@@ -179,10 +196,22 @@ func (p *dfPanel) tick() {
  procSetWindowPos.Call(p.hwnd,hwndTop,uintptr(x),uintptr(y),uintptr(pw),uintptr(ph),
   SWP_NOACTIVATE|SWP_SHOWWINDOW)
  procShowWindow.Call(p.hwnd,SW_SHOWNOACTIVATE)
+ if p.playOverlay!=0 {
+  if p.options.Mode=="hd" {
+   play:=hits[len(hits)-1]
+   px:=int(r.Left)+play.x1*w/baseW
+   py:=int(r.Top)+play.y1*h/baseH
+   pw:=(play.x2-play.x1)*w/baseW
+   ph:=(play.y2-play.y1)*h/baseH
+   procSetWindowPos.Call(p.playOverlay,hwndTop,uintptr(px),uintptr(py),uintptr(pw),uintptr(ph),SWP_NOACTIVATE|SWP_SHOWWINDOW)
+   procShowWindow.Call(p.playOverlay,SW_SHOWNOACTIVATE)
+  } else {procShowWindow.Call(p.playOverlay,SW_HIDE)}
+ }
 }
 
 func (p *dfPanel) close() {
  close(p.stop)
+ if p.playOverlay!=0 {procDestroyWindow.Call(p.playOverlay)}
  procDestroyWindow.Call(p.hwnd)
  currentDF=nil
 }
