@@ -8,6 +8,7 @@ on:
       - "feature/hd-r2-autoupdate"
     paths:
       - "launcher/**"
+      - "download/hd-manifest.json"
       - ".github/workflows/build-launcher.yml"
 
 permissions:
@@ -24,6 +25,21 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: "1.23.x"
+
+      - name: Validate HD manifest and original R2 package size
+        run: |
+          python3 - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          p = json.loads(Path("download/hd-manifest.json").read_text())
+          names = ["patch-" + c + ".mpq" for c in "ABCDEGIMNPSTU"]
+          assert p["version"] == "1"
+          assert p["base_url"] == "https://hd.dawnforge.eu"
+          assert [f["name"] for f in p["files"]] == names
+          assert sum(f["size"] for f in p["files"]) == 11363712090
+          assert all(len(f["sha256"]) == 64 and all(c in "0123456789abcdef" for c in f["sha256"]) for f in p["files"])
+          print("HD manifest PASS: 13 files / 11363712090 bytes")
+          PY
 
       - name: Test HD package validation and safe activation
         working-directory: launcher
