@@ -6,15 +6,14 @@ package main
 
 import (
     "fmt"
-    "net"
-    "net/http"
     "os/exec"
     "runtime"
-    "strings"
     "sync"
     "syscall"
     "time"
     "unsafe"
+
+    "dawnforge-launcher/internal/realm"
 )
 
 const (
@@ -53,9 +52,7 @@ type graphicsBarState struct {
     hwnd uintptr
     original uintptr
     font uintptr
-    web string
-    login string
-    cdn string
+    snapshot realm.Snapshot
     chosen string
     message string
     busy bool
@@ -80,30 +77,12 @@ var (
     procCreateFontW = gdi32.NewProc("CreateFontW")
 )
 
-func probeHttp(url string) string {
-    client:=&http.Client{Timeout:4*time.Second}
-    req,err:=http.NewRequest("HEAD",url,nil)
-    if err!=nil{return "?"}
-    resp,err:=client.Do(req)
-    if err!=nil{return "OFF"}
-    resp.Body.Close()
-    if resp.StatusCode>=200&&resp.StatusCode<400{return "ON"}
-    return "OFF"
-}
-func probeLogin() string {
-    c,err:=net.DialTimeout("tcp","dawnforge.eu:3724",3*time.Second)
-    if err!=nil{return "OFF"}
-    c.Close()
-    return "ON"
-}
 func refreshGraphicsStatuses(bar *graphicsBarState){
-    // Independent timeouts keep the UI responsive during a network outage.
-    var wg sync.WaitGroup
-    wg.Add(3)
-    go func(){defer wg.Done();s:=probeHttp("https://dawnforge.eu/");bar.mu.Lock();bar.web=s;bar.mu.Unlock()}()
-    go func(){defer wg.Done();s:=probeHttp("https://hd.dawnforge.eu/hd/patch-N.mpq");bar.mu.Lock();bar.cdn=s;bar.mu.Unlock()}()
-    go func(){defer wg.Done();s:=probeLogin();bar.mu.Lock();bar.login=s;bar.mu.Unlock()}()
-    wg.Wait()
+    status,err:=realm.Fetch(nil)
+    if err!=nil {status=realm.Unknown()}
+    bar.mu.Lock()
+    bar.snapshot=status
+    bar.mu.Unlock()
     procInvalidateRect.Call(bar.hwnd,0,0)
 }
 func startGraphicsStatusPolling(bar *graphicsBarState,done <-chan struct{}) {
@@ -147,14 +126,14 @@ func newGraphicsBar(orig uintptr)(*graphicsBarState,error){
         uintptr(uint32(fontHeight)),0,0,0,650,0,0,0,
         1,0,0,0,0,uintptr(unsafe.Pointer(fontName)),
     )
-    b:=&graphicsBarState{hwnd:hwnd,original:orig,font:font,web:"?",login:"?",cdn:"?",chosen:"",message:"CHOOSE GRAPHICS • THEN PLAY",width:1407,height:72}
+    b:=&graphicsBarState{hwnd:hwnd,original:orig,font:font,snapshot:realm.Unknown(),chosen:"",message:"CHOOSE GRAPHICS • THEN PLAY",width:1020,height:50}
     graphicsBar=b
     return b,nil
 }
 
-func readGraphicsBar(bar *graphicsBarState)(web,login,cdn,chosen,msg string,busy bool){
+func readGraphicsBar(bar *graphicsBarState)(snap realm.Snapshot,chosen,msg string,busy bool){
     bar.mu.Lock();defer bar.mu.Unlock()
-    return bar.web,bar.login,bar.cdn,bar.chosen,bar.message,bar.busy
+    return bar.snapshot,bar.chosen,bar.message,bar.busy
 }
 func updateGraphicsBar(bar *graphicsBarState,chosen,msg string,busy bool) {
     bar.mu.Lock()
@@ -201,39 +180,34 @@ func modeBarPaintHandler(hwnd uintptr){
     bar:=graphicsBar
     bar.mu.Lock();bar.width=w;bar.height=h;bar.mu.Unlock()
     if w<1||h<1{return}
-    oldFont:=uintptr(0)
-    if bar.font!=0{oldFont,_,_=procSelectObject.Call(hdc,bar.font);defer procSelectObject.Call(hdc,oldFont)}
+    if bar.font!=0{
+        old,_,_:=procSelectObject.Call(hdc,bar.font)
+        defer procSelectObject.Call(hdc,old)
+    }
     procSetBkMode.Call(hdc,transparentBk)
     fillBarRect(hdc,barRect(0,0,w,h),rgbBar(15,19,20))
-    fillBarRect(hdc,barRect(0,0,w,2),rgbBar(135,99,43))
-    fillBarRect(hdc,barRect(0,h-2,w,2),rgbBar(135,99,43))
-
-    // All information and controls share ONE physical row.
-    // Internal coordinates are scaled from the source launcher width.
-    sx:=func(v int)int{return v*w/1407}
-    sy:=func(v int)int{return v*h/72}
-    web,login,cdn,chosen,msg,busy:=readGraphicsBar(bar)
-    onColor:=rgbBar(126,228,148)
-    offColor:=rgbBar(240,123,110)
-    statusColor:=func(s string)uintptr{if s=="ON"{return onColor};if s=="OFF"{return offColor};return rgbBar(206,190,153)}
-    drawBarText(hdc,"LOGIN",barRect(sx(15),0,sx(63),h),rgbBar(190,184,171),dtLeft)
-    drawBarText(hdc,login,barRect(sx(78),0,sx(48),h),statusColor(login),dtLeft)
-    drawBarText(hdc,"WEB",barRect(sx(137),0,sx(46),h),rgbBar(190,184,171),dtLeft)
-    drawBarText(hdc,web,barRect(sx(184),0,sx(48),h),statusColor(web),dtLeft)
-    drawBarText(hdc,"HD",barRect(sx(245),0,sx(28),h),rgbBar(190,184,171),dtLeft)
-    drawBarText(hdc,cdn,barRect(sx(273),0,sx(50),h),statusColor(cdn),dtLeft)
-    // Busy messages replace only the left statuses.
-    if busy {
-        fillBarRect(hdc,barRect(sx(6),sy(4),sx(324),h-sy(8)),rgbBar(15,19,20))
-        drawBarText(hdc,msg,barRect(sx(12),0,sx(316),h),rgbBar(240,200,109),dtLeft)
-    } else if strings.HasPrefix(msg,"ERROR") {
-        fillBarRect(hdc,barRect(sx(6),sy(4),sx(324),h-sy(8)),rgbBar(15,19,20))
-        drawBarText(hdc,msg,barRect(sx(12),0,sx(316),h),rgbBar(240,123,110),dtLeft)
+    sx:=func(v int)int{return v*w/1020}
+    sy:=func(v int)int{return v*h/50}
+    snapshot,chosen,msg,busy:=readGraphicsBar(bar)
+    // Two compact selectors at LEFT. The original REALM STATUS heading,
+    // website button, INSTALL/UPDATE/PLAY and bottom artwork remain visible.
+    drawSelection(hdc,sx(7),sy(4),sx(205),sy(42),"ORIGINAL WOW",chosen=="ORIGINAL",busy)
+    drawSelection(hdc,sx(221),sy(4),sx(252),sy(42),"MODERN HD · MODELS & TEXTURES",chosen=="MODERN",busy)
+    // Centre: world state, count and uptime from the world status API.
+    color:=rgbBar(221,196,158)
+    if snapshot.State=="ONLINE"{color=rgbBar(123,235,146)}
+    if snapshot.State=="OFFLINE"{color=rgbBar(245,132,121)}
+    drawBarText(hdc,"REALM",barRect(sx(490),0,sx(68),h),rgbBar(218,189,136),dtLeft)
+    drawBarText(hdc,snapshot.State,barRect(sx(557),0,sx(110),h),color,dtLeft)
+    drawBarText(hdc,"PLAYERS",barRect(sx(676),0,sx(78),h),rgbBar(218,189,136),dtLeft)
+    drawBarText(hdc,snapshot.Players,barRect(sx(759),0,sx(54),h),rgbBar(242,237,221),dtLeft)
+    drawBarText(hdc,"UPTIME",barRect(sx(819),0,sx(76),h),rgbBar(218,189,136),dtLeft)
+    drawBarText(hdc,snapshot.Uptime,barRect(sx(896),0,sx(118),h),rgbBar(242,237,221),dtLeft)
+    if busy || len(msg)>=6&&msg[:6]=="ERROR:" {
+        // Paint only over selectors; never obscure the realm/status values.
+        fillBarRect(hdc,barRect(sx(4),sy(1),sx(470),h-sy(2)),rgbBar(15,19,20))
+        drawBarText(hdc,msg,barRect(sx(10),0,sx(458),h),rgbBar(240,200,109),dtLeft)
     }
-    drawBarText(hdc,"GRAPHICS",barRect(sx(343),0,sx(116),h),rgbBar(234,202,143),dtLeft)
-    drawSelection(hdc,sx(466),sy(10),sx(214),sy(51),"ORIGINAL WOW",chosen=="ORIGINAL",busy)
-    drawSelection(hdc,sx(695),sy(10),sx(505),sy(51),"MODERN GRAPHICS · MODELS / BUILDINGS / TEXTURES",chosen=="MODERN",busy)
-    drawSelection(hdc,sx(1215),sy(10),sx(179),sy(51),"WEBSITE",false,false)
 }
 func graphicsBarProc(hwnd uintptr,msg uint32,wParam,lParam uintptr)uintptr{
     switch msg{
@@ -245,14 +219,9 @@ func graphicsBarProc(hwnd uintptr,msg uint32,wParam,lParam uintptr)uintptr{
         x:=int(int16(uint16(lParam&0xffff)))
         bar.mu.Lock();bw,busy:=bar.width,bar.busy;bar.mu.Unlock()
         if busy||bw<=0{return 0}
-        v:=x*1407/bw
-        if v>=466&&v<680 {go activateGraphicsMode(bar,"ORIGINAL");return 0}
-        if v>=695&&v<1200 {go activateGraphicsMode(bar,"MODERN");return 0}
-        if v>=1215&&v<1394 {
-            // Open the public web site without embedding player credentials.
-            _=exec.Command("rundll32.exe","url.dll,FileProtocolHandler","https://dawnforge.eu/").Start()
-            return 0
-        }
+        v:=x*1020/bw
+        if v>=7&&v<212 {go activateGraphicsMode(bar,"ORIGINAL");return 0}
+        if v>=221&&v<473 {go activateGraphicsMode(bar,"MODERN");return 0}
         return 0
     }
     result,_,_:=procDefWindowProcW.Call(hwnd,uintptr(msg),wParam,lParam)
@@ -296,10 +265,10 @@ func updateGraphicsBarPosition(bar *graphicsBarState,orig uintptr) {
     ww,wh:=int(wr.Right-wr.Left),int(wr.Bottom-wr.Top)
     if ww<=0||wh<=0{return}
     x:=int(wr.Left)+24*ww/baseW
-    y:=int(wr.Top)+632*wh/baseH
-    w:=1407*ww/baseW
-    h:=70*wh/baseH
-    if h<36{h=36}
+    y:=int(wr.Top)+605*wh/baseH
+    w:=1020*ww/baseW
+    h:=48*wh/baseH
+    if h<30{h=30}
     procSetWindowPos.Call(bar.hwnd,hwndTop,uintptr(x),uintptr(y),uintptr(w),uintptr(h),SWP_NOACTIVATE|SWP_SHOWWINDOW)
 }
 func pollWindowsMessages(){
