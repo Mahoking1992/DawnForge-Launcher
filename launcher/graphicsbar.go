@@ -142,8 +142,9 @@ func newGraphicsBar(orig uintptr)(*graphicsBarState,error){
     )
     if hwnd==0{return nil,fmt.Errorf("graphics status window: %v",e)}
     fontName:=utf16Ptr("Segoe UI")
+    fontHeight:=int32(-17)
     font,_,_:=procCreateFontW.Call(
-        uintptr(int32(-17)),0,0,0,650,0,0,0,
+        uintptr(uint32(fontHeight)),0,0,0,650,0,0,0,
         1,0,0,0,0,uintptr(unsafe.Pointer(fontName)),
     )
     b:=&graphicsBarState{hwnd:hwnd,original:orig,font:font,web:"?",login:"?",cdn:"?",chosen:"ORIGINAL",message:"CHOOSE GRAPHICS • THEN PLAY",width:1407,height:72}
