@@ -3,6 +3,7 @@ package main
 // HD play support for the local TEST client only. No automatic game downloads,
 // file deletion, registry changes, or modifications to the original client.
 import (
+ "bytes"
  "crypto/sha256"
  "encoding/hex"
  "encoding/xml"
@@ -14,6 +15,7 @@ import (
  "path/filepath"
  "regexp"
  "strings"
+ "sort"
  "time"
  "syscall"
 )
@@ -86,6 +88,66 @@ func dfHDLog(entry string) {
  fmt.Fprintf(f,"%s %s\n",time.Now().Format(time.RFC3339),entry)
 }
 
+// Reuse the verified local wowreeb config instead of overwriting it.
+// The earliest pre-test backup is preferred because previous test builds
+// could have replaced the original working config.
+func dfExistingConfig(setup,drive string) ([]byte,string,string,error) {
+ names:=[]string{}
+ entries,err:=os.ReadDir(setup)
+ if err!=nil{return nil,"","",err}
+ for _,entry:=range entries {
+  name:=entry.Name()
+  if strings.HasPrefix(name,"config-before-launcher-test-") && strings.HasSuffix(strings.ToLower(name),".xml") {
+   names=append(names,filepath.Join(setup,name))
+  }
+ }
+ sort.Strings(names)
+ names=append(names,filepath.Join(setup,"config.xml"))
+ for _,file:=range names {
+  raw,err:=os.ReadFile(file)
+  if err!=nil {continue}
+  config,entry,err:=dfRebaseConfig(raw,drive)
+  if err==nil && entry!="" {return config,file,entry,nil}
+ }
+ return nil,"","",errors.New("No valid existing wowreeb config or backup found. The original HD config is untouched.")
+}
+
+// Token-preserving XML rewrite changes only the two paths that depend
+// on the local ASCII subst drive, and keeps all other verified settings.
+func dfRebaseConfig(raw []byte,drive string) ([]byte,string,error) {
+ dec:=xml.NewDecoder(bytes.NewReader(raw))
+ var buffer bytes.Buffer
+ enc:=xml.NewEncoder(&buffer)
+ entry:=""
+ realmCount:=0
+ exeCount:=0
+ for {
+  token,err:=dec.Token()
+  if err==io.EOF {break}
+  if err!=nil{return nil,"",err}
+  if el,ok:=token.(xml.StartElement);ok {
+   switch el.Name.Local {
+   case "Realm":
+    realmCount++
+    for _,a:=range el.Attr {if a.Name.Local=="Name" && entry=="" {entry=a.Value}}
+   case "Exe":
+    exeCount++
+    for i,a:=range el.Attr {if a.Name.Local=="Path" {el.Attr[i].Value=drive+string([]byte{92})+"WoW.exe"}}
+   case "DLL":
+    for i,a:=range el.Attr {
+     if a.Name.Local=="Path" && strings.EqualFold(filepath.Base(strings.ReplaceAll(a.Value,string([]byte{92}),"/")),"VanillaHelpers.dll") {
+      el.Attr[i].Value=drive+string([]byte{92})+"VanillaHelpers.dll"
+     }
+    }
+   }
+   token=el
+  }
+  if err:=enc.EncodeToken(token);err!=nil{return nil,"",err}
+ }
+ if err:=enc.Flush();err!=nil{return nil,"",err}
+ if realmCount==0||exeCount==0||entry=="" {return nil,"",errors.New("Missing wowreeb Realm or Exe Path")}
+ return buffer.Bytes(),entry,nil
+}
 func dfLaunchHD() error {
  dfHDLog("HD PLAY pressed")
  root,err:=dfFindTestClient()
@@ -119,29 +181,18 @@ func dfLaunchHD() error {
  drive,err:=dfSubst(root)
  if err!=nil{dfHDLog("Subst error: "+err.Error());return err}
  dfHDLog("Subst drive: "+drive)
- exeHash,err:=dfHash(exe)
- if err!=nil{return err}
- x:=dfHDXML{
-  Config:[]dfHDConfig{{Name:"ClearWDB",Value:"0"}},
-  Realm:[]dfHDRealm{{
-   Name:"DawnForge HD Test",
-   Exe:dfHDExe{Path:drive+`\WoW.exe`,SHA256:exeHash},
-   DLL:dfHDDLL{Path:drive+`\VanillaHelpers.dll`},
-  }},
- }
- data,err:=xml.MarshalIndent(x,"","  ")
- if err!=nil{return err}
- data=append([]byte(xml.Header),data...)
- config:=filepath.Join(setup,"config.xml")
- if old,e:=os.ReadFile(config);e==nil && string(old)!=string(data) {
-  backup:=filepath.Join(setup,fmt.Sprintf("config-before-launcher-test-%d.xml",time.Now().UnixNano()))
-  if err:=os.WriteFile(backup,old,0600);err!=nil{return err}
- }
- if err:=os.WriteFile(config,data,0600);err!=nil{dfHDLog("Config write: "+err.Error());return err}
- dfHDLog("Wowreeb config ready")
+ // Preserve the working wowreeb configuration. The old launcher broke HD
+ // by replacing it with a freshly generated minimal config.xml.
+ config,source,entry,err:=dfExistingConfig(setup,drive)
+ if err!=nil{dfHDLog("Config selection: "+err.Error());return err}
+ dfHDLog("Using existing config: "+source+", entry: "+entry)
+ session:=filepath.Join(os.Getenv("LOCALAPPDATA"),"DawnForge","LauncherTest","HDSession")
+ if err:=os.MkdirAll(session,0700);err!=nil{return err}
+ if err:=os.WriteFile(filepath.Join(session,"config.xml"),config,0600);err!=nil{return err}
+ dfHDLog("Private HD session config ready; the existing game config was not modified")
  cmd:=exec.Command(loader)
- cmd.Dir=setup
- cmd.Env=append(os.Environ(),"WOWREEB_ENTRY=DawnForge HD Test")
+ cmd.Dir=session
+ cmd.Env=append(os.Environ(),"WOWREEB_ENTRY="+entry)
  cmd.SysProcAttr=&syscall.SysProcAttr{HideWindow:true}
  if err:=cmd.Start();err!=nil{dfHDLog("Wowreeb launch: "+err.Error());return err}
  dfHDLog(fmt.Sprintf("Wowreeb started, PID %d",cmd.Process.Pid))
