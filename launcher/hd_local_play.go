@@ -13,11 +13,11 @@ import (
  "os"
  "os/exec"
  "path/filepath"
- "regexp"
  "strings"
  "sort"
  "time"
  "syscall"
+ "unsafe"
 )
 
 type dfHDXML struct {
@@ -62,22 +62,64 @@ func dfFindTestClient() (string,error) {
  }
  return "",errors.New(`HD test copy not found in C:\ (expected C:\wow – kópia)`)
 }
+// Alias the HD test directory via the Unicode Win32 DOS-device API.
+// The path contains an en dash and an accented character, so the ANSI
+// console output from subst.exe is unreliable.
 func dfSubst(root string) (string,error) {
- listCmd:=exec.Command("subst.exe")
- listCmd.SysProcAttr=&syscall.SysProcAttr{HideWindow:true,CreationFlags:0x08000000}
- content,_:=listCmd.CombinedOutput()
- re:=regexp.MustCompile(`(?m)^([A-Za-z]):\\: => (.*?)\r?$`)
- for _,match:=range re.FindAllStringSubmatch(string(content),-1) {
-  if strings.EqualFold(strings.TrimRight(match[2],`\`),strings.TrimRight(root,`\`)) {
-   return strings.ToUpper(match[1])+":",nil
+ k32:=syscall.NewLazyDLL("kernel32.dll")
+ getDrives:=k32.NewProc("GetLogicalDrives")
+ queryDevice:=k32.NewProc("QueryDosDeviceW")
+ defineDevice:=k32.NewProc("DefineDosDeviceW")
+ root=filepath.Clean(root)
+ target:="\\??\\"+root
+ wantedFile:=filepath.Join(root,"WoW.exe")
+ stWanted,err:=os.Stat(wantedFile)
+ if err!=nil {return "",fmt.Errorf("HD WoW.exe unavailable: %w",err)}
+ mask,_,e:=getDrives.Call()
+ if mask==0 {return "",fmt.Errorf("GetLogicalDrives failed: %v",e)}
+ // First reuse any existing subst mapping for precisely this client.
+ for ch:='Z';ch>='D';ch-- {
+  drive:=string(ch)+":"
+  if mask&(1<<uint(ch-'A'))==0 {continue}
+  ptr:=syscall.StringToUTF16Ptr(drive)
+  buf:=make([]uint16,2048)
+  count,_,_:=queryDevice.Call(uintptr(unsafe.Pointer(ptr)),uintptr(unsafe.Pointer(&buf[0])),uintptr(len(buf)))
+  if count==0 {continue}
+  native:=syscall.UTF16ToString(buf)
+  native=strings.TrimPrefix(native,"\\??\\")
+  if !strings.EqualFold(filepath.Clean(native),root) {continue}
+  stMapped,mappingError:=os.Stat(drive+"\\WoW.exe")
+  if mappingError==nil && os.SameFile(stMapped,stWanted) {
+   dfHDLog("Reusing HD alias "+drive+" -> "+root)
+   return drive,nil
   }
  }
- for _,letter:=range "ZYXWVUTSR" {
-  drive:=string(letter)+":"
-  if _,err:=os.Stat(drive+`\`);err==nil {continue}
-  if err:=func()error{cmd:=exec.Command("subst.exe",drive,root);cmd.SysProcAttr=&syscall.SysProcAttr{HideWindow:true,CreationFlags:0x08000000};return cmd.Run()}();err==nil{return drive,nil}
+ errorsSeen:=[]string{}
+ for _,ch:=range "ZYXWVUTSRQPONMLKJIHGFED" {
+  if mask&(1<<uint(ch-'A'))!=0 {continue}
+  drive:=string(ch)+":"
+  drivePtr:=syscall.StringToUTF16Ptr(drive)
+  pathPtr:=syscall.StringToUTF16Ptr(target)
+  ok,_,createErr:=defineDevice.Call(0x1,
+   uintptr(unsafe.Pointer(drivePtr)),uintptr(unsafe.Pointer(pathPtr)))
+  if ok==0 {
+   if len(errorsSeen)<3 {errorsSeen=append(errorsSeen,drive+" "+createErr.Error())}
+   continue
+  }
+  stMapped,readErr:=os.Stat(drive+"\\WoW.exe")
+  if readErr==nil && os.SameFile(stMapped,stWanted) {
+   dfHDLog("Created HD alias "+drive+" -> "+root)
+   return drive,nil
+  }
+  // Roll back only the virtual alias we just created, never an existing drive.
+  defineDevice.Call(0x1|0x2|0x4,
+   uintptr(unsafe.Pointer(drivePtr)),uintptr(unsafe.Pointer(pathPtr)))
+  if len(errorsSeen)<3 {errorsSeen=append(errorsSeen,drive+" verification: "+fmt.Sprint(readErr))}
  }
- return "",errors.New("No available Windows drive letter for HD test")
+ if len(errorsSeen)==0 {
+  return "",errors.New("No free drive letter. Check current virtual drives.")
+ }
+ return "",fmt.Errorf("Cannot create HD alias: %s",strings.Join(errorsSeen,"; "))
 }
 func dfHDLog(entry string) {
  dir:=filepath.Join(os.Getenv("LOCALAPPDATA"),"DawnForge","LauncherTest")
