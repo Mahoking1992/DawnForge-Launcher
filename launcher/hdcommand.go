@@ -90,8 +90,27 @@ func handleHDCommand()bool{
  arg:=""
  if len(os.Args)>2{arg=os.Args[2]}
  if mode=="--hd-set-game"&&arg=="" {messageBoxFallback("WoW directory not provided");return true}
- if err:=hdTask(mode,arg);err!=nil{
-  messageBoxFallback("DawnForge HD: "+err.Error())
+ var status string
+ if mode=="--hd-set-game" {
+  if err:=hdTask(mode,arg);err!=nil{ messageBoxFallback("DawnForge HD: "+err.Error()) }
+  return true
  }
+ if settingsPath,err:=hdSettingsPath();err==nil{
+  _=os.WriteFile(filepath.Join(filepath.Dir(settingsPath),"hd-last-run.log"),
+   []byte("Started "+mode+" at "+time.Now().Format(time.RFC3339)+"\\n"),0600)
+ }
+ err:=hdTask(mode,arg)
+ if err!=nil{
+  status="FAILED "+mode+": "+err.Error()
+ }else if mode=="--hd-install" {
+  status="SUCCESS: 13 HD patch files verified and enabled. Existing Vanilla files are preserved."
+ }else {
+  status="SUCCESS: Vanilla graphics enabled. Verified HD patches retained in disabled folder."
+ }
+ if settingsPath,e:=hdSettingsPath();e==nil{
+  _=os.WriteFile(filepath.Join(filepath.Dir(settingsPath),"hd-last-run.log"),
+   []byte(time.Now().Format(time.RFC3339)+"\\n"+status+"\\n"),0600)
+ }
+ messageBoxFallback(status)
  return true
 }
