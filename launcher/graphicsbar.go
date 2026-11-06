@@ -51,6 +51,7 @@ type graphicsBarState struct {
     hwnd uintptr
     original uintptr
     font uintptr
+    statusFont uintptr
     snapshot realm.Snapshot
     chosen string
     message string
@@ -125,7 +126,12 @@ func newGraphicsBar(orig uintptr)(*graphicsBarState,error){
         uintptr(uint32(fontHeight)),0,0,0,650,0,0,0,
         1,0,0,0,0,uintptr(unsafe.Pointer(fontName)),
     )
-    b:=&graphicsBarState{hwnd:hwnd,original:orig,font:font,snapshot:realm.Unknown(),chosen:"",message:"CHOOSE GRAPHICS • THEN PLAY",width:1020,height:50}
+    statusHeight:=int32(-23)
+    bigFont,_,_:=procCreateFontW.Call(
+        uintptr(uint32(statusHeight)),0,0,0,700,0,0,0,
+        1,0,0,0,0,uintptr(unsafe.Pointer(fontName)),
+    )
+    b:=&graphicsBarState{hwnd:hwnd,original:orig,font:font,statusFont:bigFont,snapshot:realm.Unknown(),chosen:"",message:"CHOOSE GRAPHICS • THEN PLAY",width:1135,height:85}
     graphicsBar=b
     return b,nil
 }
@@ -173,39 +179,78 @@ func modeBarPaintHandler(hwnd uintptr){
     hdc,_,_:=procBeginPaint.Call(hwnd,uintptr(unsafe.Pointer(&ps)))
     if hdc==0{return}
     defer procEndPaint.Call(hwnd,uintptr(unsafe.Pointer(&ps)))
-    var r RECT
-    procGetClientRect.Call(hwnd,uintptr(unsafe.Pointer(&r)))
-    w,h:=int(r.Right),int(r.Bottom)
+    var client RECT
+    procGetClientRect.Call(hwnd,uintptr(unsafe.Pointer(&client)))
+    w,h:=int(client.Right),int(client.Bottom)
+    if w<=0||h<=0{return}
+
     bar:=graphicsBar
-    bar.mu.Lock();bar.width=w;bar.height=h;bar.mu.Unlock()
-    if w<1||h<1{return}
-    if bar.font!=0{
-        old,_,_:=procSelectObject.Call(hdc,bar.font)
-        defer procSelectObject.Call(hdc,old)
+    bar.mu.Lock()
+    bar.width=w
+    bar.height=h
+    bar.mu.Unlock()
+
+    oldFont:=uintptr(0)
+    if bar.font!=0 {
+        oldFont,_,_=procSelectObject.Call(hdc,bar.font)
+        defer procSelectObject.Call(hdc,oldFont)
     }
     procSetBkMode.Call(hdc,transparentBk)
-    fillBarRect(hdc,barRect(0,0,w,h),rgbBar(15,19,20))
-    sx:=func(v int)int{return v*w/1020}
-    sy:=func(v int)int{return v*h/50}
-    snapshot,chosen,msg,busy:=readGraphicsBar(bar)
-    // Two compact selectors at LEFT. The original REALM STATUS heading,
-    // website button, INSTALL/UPDATE/PLAY and bottom artwork remain visible.
-    drawSelection(hdc,sx(7),sy(4),sx(205),sy(42),"ORIGINAL WOW",chosen=="ORIGINAL",busy)
-    drawSelection(hdc,sx(221),sy(4),sx(252),sy(42),"MODERN HD · MODELS & TEXTURES",chosen=="MODERN",busy)
-    // Centre: world state, count and uptime from the world status API.
-    color:=rgbBar(221,196,158)
-    if snapshot.State=="ONLINE"{color=rgbBar(123,235,146)}
-    if snapshot.State=="OFFLINE"{color=rgbBar(245,132,121)}
-    drawBarText(hdc,"REALM",barRect(sx(490),0,sx(68),h),rgbBar(218,189,136),dtLeft)
-    drawBarText(hdc,snapshot.State,barRect(sx(557),0,sx(110),h),color,dtLeft)
-    drawBarText(hdc,"PLAYERS",barRect(sx(676),0,sx(78),h),rgbBar(218,189,136),dtLeft)
-    drawBarText(hdc,snapshot.Players,barRect(sx(759),0,sx(54),h),rgbBar(242,237,221),dtLeft)
-    drawBarText(hdc,"UPTIME",barRect(sx(819),0,sx(76),h),rgbBar(218,189,136),dtLeft)
-    drawBarText(hdc,snapshot.Uptime,barRect(sx(896),0,sx(118),h),rgbBar(242,237,221),dtLeft)
+    sx:=func(v int)int{return v*w/1135}
+    sy:=func(v int)int{return v*h/85}
+
+    // Replaces only the original GAME VERSION + REALM STATUS information row.
+    // The WEBSITE button to the right and INSTALL/UPDATE/PLAY below remain intact.
+    gold:=rgbBar(145,103,45)
+    labelColor:=rgbBar(232,201,148)
+    valueColor:=rgbBar(248,236,211)
+    fillBarRect(hdc,barRect(0,0,w,h),rgbBar(13,17,19))
+    fillBarRect(hdc,barRect(0,0,w,sy(2)),gold)
+    fillBarRect(hdc,barRect(0,h-sy(2),w,sy(2)),gold)
+    fillBarRect(hdc,barRect(0,0,sx(2),h),gold)
+    fillBarRect(hdc,barRect(w-sx(2),0,sx(2),h),gold)
+
+    status,chosen,msg,busy:=readGraphicsBar(bar)
+
+    // Left side: match the original launcher panel shown in the reference image.
+    drawBarText(hdc,"GRAPHICS",barRect(sx(12),0,sx(99),h),labelColor,dtLeft)
+    drawSelection(hdc,sx(110),sy(12),sx(158),sy(59),
+        "OLD VANILLA",chosen=="ORIGINAL",busy)
+    drawSelection(hdc,sx(275),sy(12),sx(165),sy(59),
+        "MODERN VANILLA",chosen=="MODERN",busy)
+
+    // Columns have fixed positions in the original 1458×972 design coordinates.
+    for _,divider:=range []int{445,662,884}{
+        fillBarRect(hdc,barRect(sx(divider),sy(8),sx(2),sy(69)),gold)
+    }
+
+    titleRect:=func(x,width int)RECT{
+        return barRect(sx(x),sy(8),sx(width),sy(29))
+    }
+    valueRect:=func(x,width int)RECT{
+        return barRect(sx(x),sy(36),sx(width),sy(40))
+    }
+
+    drawBarText(hdc,"REALM STATUS",titleRect(452,204),labelColor,dtCenter)
+    drawBarText(hdc,"PLAYERS ONLINE",titleRect(670,208),labelColor,dtCenter)
+    drawBarText(hdc,"UPTIME",titleRect(892,232),labelColor,dtCenter)
+
+    realmColor:=valueColor
+    if status.State=="ONLINE" {realmColor=rgbBar(87,231,123)}
+    if status.State=="OFFLINE" {realmColor=rgbBar(249,103,103)}
+    if status.State=="MAINTENANCE" {realmColor=rgbBar(242,176,79)}
+
+    if bar.statusFont!=0 {procSelectObject.Call(hdc,bar.statusFont)}
+    drawBarText(hdc,status.State,valueRect(452,204),realmColor,dtCenter)
+    drawBarText(hdc,status.Players,valueRect(670,208),rgbBar(87,231,123),dtCenter)
+    drawBarText(hdc,status.Uptime,valueRect(892,232),valueColor,dtCenter)
+
+    if bar.font!=0 {procSelectObject.Call(hdc,bar.font)}
     if busy || len(msg)>=6&&msg[:6]=="ERROR:" {
-        // Paint only over selectors; never obscure the realm/status values.
-        fillBarRect(hdc,barRect(sx(4),sy(1),sx(470),h-sy(2)),rgbBar(15,19,20))
-        drawBarText(hdc,msg,barRect(sx(10),0,sx(458),h),rgbBar(240,200,109),dtLeft)
+        fillBarRect(hdc,barRect(sx(3),sy(3),sx(440),h-sy(6)),rgbBar(13,17,19))
+        color:=rgbBar(240,200,109)
+        if len(msg)>=6 && msg[:6]=="ERROR:" {color=rgbBar(249,123,111)}
+        drawBarText(hdc,msg,barRect(sx(12),sy(3),sx(422),h-sy(6)),color,dtCenter)
     }
 }
 func graphicsBarProc(hwnd uintptr,msg uint32,wParam,lParam uintptr)uintptr{
@@ -218,9 +263,9 @@ func graphicsBarProc(hwnd uintptr,msg uint32,wParam,lParam uintptr)uintptr{
         x:=int(int16(uint16(lParam&0xffff)))
         bar.mu.Lock();bw,busy:=bar.width,bar.busy;bar.mu.Unlock()
         if busy||bw<=0{return 0}
-        v:=x*1020/bw
-        if v>=7&&v<212 {go activateGraphicsMode(bar,"ORIGINAL");return 0}
-        if v>=221&&v<473 {go activateGraphicsMode(bar,"MODERN");return 0}
+        v:=x*1135/bw
+        if v>=110&&v<268 {go activateGraphicsMode(bar,"ORIGINAL");return 0}
+        if v>=275&&v<440 {go activateGraphicsMode(bar,"MODERN");return 0}
         return 0
     }
     result,_,_:=procDefWindowProcW.Call(hwnd,uintptr(msg),wParam,lParam)
@@ -263,11 +308,11 @@ func updateGraphicsBarPosition(bar *graphicsBarState,orig uintptr) {
     if ok,_,_:=procGetWindowRect.Call(orig,uintptr(unsafe.Pointer(&wr)));ok==0{return}
     ww,wh:=int(wr.Right-wr.Left),int(wr.Bottom-wr.Top)
     if ww<=0||wh<=0{return}
-    x:=int(wr.Left)+24*ww/baseW
-    y:=int(wr.Top)+605*wh/baseH
-    w:=1020*ww/baseW
-    h:=48*wh/baseH
-    if h<30{h=30}
+    x:=int(wr.Left)+28*ww/baseW
+    y:=int(wr.Top)+618*wh/baseH
+    w:=1135*ww/baseW
+    h:=85*wh/baseH
+    if h<55{h=55}
     procSetWindowPos.Call(bar.hwnd,hwndTop,uintptr(x),uintptr(y),uintptr(w),uintptr(h),SWP_NOACTIVATE|SWP_SHOWWINDOW)
 }
 func pollWindowsMessages(){
@@ -285,4 +330,5 @@ func destroyGraphicsBar(bar *graphicsBarState){
     if bar==nil{return}
     procDestroyWindow.Call(bar.hwnd)
     if bar.font!=0{procDeleteObject.Call(bar.font)}
+    if bar.statusFont!=0{procDeleteObject.Call(bar.statusFont)}
 }
