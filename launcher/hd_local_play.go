@@ -4,6 +4,8 @@ package main
 // file deletion, registry changes, or modifications to the original client.
 import (
  "bytes"
+ "encoding/base64"
+ "unicode/utf16"
  "crypto/sha256"
  "encoding/hex"
  "encoding/xml"
@@ -201,57 +203,52 @@ func dfStageBytes(data []byte,destination string) error {
  return nil
 }
 func dfLaunchHD() error {
- dfHDLog("HD PLAY pressed")
+ dfHDLog("HD PLAY pressed - using original PowerShell Start-Process method")
  root,err:=dfFindTestClient()
- if err!=nil{dfHDLog("HD test folder: "+err.Error());return err}
- dfHDLog("HD test client: "+root)
- if strings.EqualFold(filepath.Clean(root),filepath.Clean("C:\\wow")) {
-  return errors.New("Refusing to change or launch the original C:\\wow as HD test")
- }
+ if err!=nil{return err}
+ dfHDLog("HD client: "+root)
+ if strings.EqualFold(filepath.Clean(root),filepath.Clean("C:\\wow")) {return errors.New("Refusing to use original game for HD")}
  setup:=filepath.Join(root,"_DawnForge_HD_Wowreeb_3_5")
  loader:=filepath.Join(setup,"wowreeb32.exe")
- dll:=filepath.Join(setup,"wowreeb32.dll")
  helper:=filepath.Join(root,"VanillaHelpers.dll")
- for _,f:=range []string{loader,dll,helper,filepath.Join(root,"WoW.exe")} {
-  if st,e:=os.Stat(f);e!=nil || st.IsDir() {
-   return fmt.Errorf("Required HD test file missing: %s",f)
-  }
+ for _,file:=range []string{loader,filepath.Join(setup,"wowreeb32.dll"),helper,filepath.Join(setup,"config.xml"),filepath.Join(root,"WoW.exe")} {
+  if st,e:=os.Stat(file);e!=nil || st.IsDir(){return fmt.Errorf("HD file missing: %s",file)}
  }
- h,err:=dfHash(helper)
+ hash,err:=dfHash(helper)
  if err!=nil{return err}
- const trusted="1e74ddf6484c23482550d5f9e5f9d291085c4ac538d3b3ed9d87155521841196"
- if !strings.EqualFold(h,trusted) {
-  return errors.New("VanillaHelpers.dll hash mismatch; refusing to load it")
+ if !strings.EqualFold(hash,"1e74ddf6484c23482550d5f9e5f9d291085c4ac538d3b3ed9d87155521841196"){return errors.New("VanillaHelpers.dll verification failed")}
+ for _,id:=range []string{"A","B","C","D","E","G","I","M","N","P","S","T","U"}{
+  if st,e:=os.Stat(filepath.Join(root,"Data","patch-"+id+".mpq"));e!=nil || st.Size()<512{return fmt.Errorf("HD patch %s is not installed",id)}
  }
- // The full HD profile must already be installed. Never download or move MPQs
- // during PLAY and never touch the production client's Data folder.
- for _,id:=range []string{"A","B","C","D","E","G","I","M","N","P","S","T","U"} {
-  mpq:=filepath.Join(root,"Data","patch-"+id+".mpq")
-  if st,e:=os.Stat(mpq);e!=nil || st.Size()<512 {
-   return fmt.Errorf("HD patch %s is not active in the TEST copy",id)
-  }
- }
+ // The old working PowerShell script used an existing Windows SUBST mapping.
+ // Keep that exact behavior, without creating any replacement wowreeb config.
  drive,err:=dfSubst(root)
- if err!=nil {dfHDLog("Virtual drive: "+err.Error());return err}
- dfHDLog("HD virtual drive: "+drive)
- session,entry,err:=dfPrepareASCIILoader(setup,root,drive)
- if err!=nil{dfHDLog("ASCII loader preparation: "+err.Error());return err}
- dfHDLog("HD game and original wowreeb config remain unchanged")
- cmd:=exec.Command(filepath.Join(session,"wowreeb32.exe"))
- cmd.Dir=session
- cmd.Env=append(os.Environ(),"WOWREEB_ENTRY="+entry)
- cmd.SysProcAttr=&syscall.SysProcAttr{HideWindow:true}
- if err:=cmd.Start();err!=nil {dfHDLog("Start failed: "+err.Error());return err}
- dfHDLog(fmt.Sprintf("wowreeb started PID %d",cmd.Process.Pid))
- err=cmd.Wait()
+ if err!=nil{return err}
+ dfHDLog("HD mapped drive: "+drive)
+ // This replicates the old SPUSTIT-HD.ps1 startup, using the original
+ // wowreeb32.exe, its original config.xml and the PowerShell Start-Process
+ // API instead of launching a fabricated isolated wowreeb session.
+ // The game and configuration are never written by this function.
+ quote:=func(x string)string{return "'"+strings.ReplaceAll(x,"'","''")+"'"}
+ ps:="$ErrorActionPreference='Stop';"+
+    "$env:WOWREEB_ENTRY='DawnForge HD Test';"+
+    "$p=Start-Process -FilePath "+quote(loader)+" -WorkingDirectory "+quote(setup)+" -PassThru -ErrorAction Stop;"+
+    "Write-Output ('WOWREEB_PID='+$p.Id);"+
+    "Start-Sleep -Milliseconds 1300;"+
+    "if($p.HasExited){Write-Output ('WOWREEB_EXIT='+$p.ExitCode); if($p.ExitCode -ne 0){exit 13}}"
+ // EncodedCommand uses UTF-16LE; avoid shell interpolation and quote issues.
+ encoded:=utf16.Encode([]rune(ps))
+ raw:=make([]byte,len(encoded)*2)
+ for i,v:=range encoded {raw[2*i]=byte(v);raw[2*i+1]=byte(v>>8)}
+ cmd:=exec.Command("powershell.exe","-NoProfile","-NonInteractive","-EncodedCommand",base64.StdEncoding.EncodeToString(raw))
+ cmd.Dir=setup
+ cmd.SysProcAttr=&syscall.SysProcAttr{HideWindow:true,CreationFlags:0x08000000}
+ output,err:=cmd.CombinedOutput()
+ response:=strings.TrimSpace(string(output))
+ dfHDLog("PowerShell Start-Process result: "+response)
  if err!=nil {
-  dfHDLog("wowreeb terminated with error: "+err.Error())
-  if codeErr,ok:=err.(*exec.ExitError);ok && uint32(codeErr.ExitCode())==0xc0000409 {
-   dfHDLog("Windows fast-fail 0xC0000409: loader or injected DLL crash; root cause needs Windows Application Event 1000 faulting module")
-   return errors.New("wowreeb stopped with Windows fast-fail 0xC0000409. This is NOT an AuthServer error. Check Windows Event Viewer > Application > event 1000 for the faulting module; do not disable Defender")
-  }
-  return fmt.Errorf("wowreeb crashed: %w. Check Windows Application Event 1000 for the faulting module",err)
+  return fmt.Errorf("Original PowerShell HD startup failed: %w. %s",err,response)
  }
- dfHDLog("wowreeb process returned success")
+ dfHDLog("PowerShell completed; actual HD game window still requires visual verification")
  return nil
 }
