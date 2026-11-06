@@ -43,7 +43,7 @@ jobs:
 
       - name: Test HD package validation and safe activation
         working-directory: launcher
-        run: go test ./internal/hd
+        run: go test ./internal/hd ./internal/realm
 
       - name: Recover exact original DawnForge launcher
         run: |
