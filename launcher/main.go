@@ -144,11 +144,20 @@ func main() {
         }
     }()
 
+    bar, barErr := newGraphicsBar(originalHwnd)
+    if barErr != nil {
+        messageBoxFallback("Graphics status bar disabled: " + barErr.Error())
+    }
+
     done := make(chan struct{})
     go func() {
         _ = cmd.Wait()
         close(done)
     }()
+    if bar != nil {
+        defer destroyGraphicsBar(bar)
+        startGraphicsStatusPolling(bar, done)
+    }
 
     tick := time.NewTicker(25 * time.Millisecond)
     defer tick.Stop()
@@ -160,6 +169,10 @@ func main() {
             procShowWindow.Call(overlay, SW_HIDE)
             return
         case <-tick.C:
+            pollWindowsMessages()
+            if bar != nil {
+                updateGraphicsBarPosition(bar, originalHwnd)
+            }
             idx, r, ok := hoveredRect(originalHwnd)
             if !ok {
                 if last != -1 {
