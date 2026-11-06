@@ -89,6 +89,20 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Publish isolated public Windows TEST EXE
+        if: github.ref == 'refs/heads/feature/hd-r2-autoupdate'
+        run: |
+          mkdir -p testing
+          cp launcher/DawnForgeLauncher.exe testing/DawnForgeLauncher-v1.0.12-TEST.exe
+          sha256sum testing/DawnForgeLauncher-v1.0.12-TEST.exe
+          git config user.name "DawnForge Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add testing/DawnForgeLauncher-v1.0.12-TEST.exe
+          if ! git diff --cached --quiet; then
+            git commit -m "Publish isolated v1.0.12 Windows test binary"
+            git push origin HEAD:feature/hd-r2-autoupdate
+          fi
+
       - name: Publish download files
         if: github.ref == 'refs/heads/main'
         run: |
