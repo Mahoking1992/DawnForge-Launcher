@@ -46,30 +46,93 @@ func dfHash(path string) (string,error) {
  return hex.EncodeToString(h.Sum(nil)),nil
 }
 func dfFindTestClient() (string,error) {
- entries,err:=os.ReadDir("C:\")
+ entries,err:=os.ReadDir(`C:\`)
  if err!=nil{return "",err}
  for _,item:=range entries {
   if !item.IsDir(){continue}
   name:=strings.ToLower(item.Name())
   if !strings.HasPrefix(name,"wow") || !strings.Contains(name,"kópia"){continue}
-  root:=filepath.Join("C:\",item.Name())
+  root:=filepath.Join(`C:\`,item.Name())
   if _,err:=os.Stat(filepath.Join(root,"WoW.exe"));err==nil {
    return root,nil
   }
  }
- return "",errors.New("HD test copy not found in C:\ (expected C:\wow – kópia)")
+ return "",errors.New(`HD test copy not found in C:\ (expected C:\wow – kópia)`)
 }
 func dfSubst(root string) (string,error) {
  content,_:=exec.Command("subst.exe").CombinedOutput()
- re:=regexp.MustCompile(`(?m)^([A-Za-z]):\: => (.*?)?$`)
+ re:=regexp.MustCompile(`(?m)^([A-Za-z]):\\: => (.*?)\r?package main
+
+// HD play support for the local TEST client only. No automatic game downloads,
+// file deletion, registry changes, or modifications to the original client.
+import (
+ "crypto/sha256"
+ "encoding/hex"
+ "encoding/xml"
+ "errors"
+ "fmt"
+ "io"
+ "os"
+ "os/exec"
+ "path/filepath"
+ "regexp"
+ "strings"
+ "time"
+)
+
+type dfHDXML struct {
+ XMLName xml.Name `xml:"wowreeb"`
+ Config []dfHDConfig `xml:"Config"`
+ Realm []dfHDRealm `xml:"Realm"`
+}
+type dfHDConfig struct {
+ Name string `xml:"Name,attr"`
+ Value string `xml:"Value,attr"`
+}
+type dfHDRealm struct {
+ Name string `xml:"Name,attr"`
+ Exe dfHDExe `xml:"Exe"`
+ DLL dfHDDLL `xml:"DLL"`
+}
+type dfHDExe struct {
+ Path string `xml:"Path,attr"`
+ SHA256 string `xml:"SHA256,attr"`
+}
+type dfHDDLL struct {Path string `xml:"Path,attr"`}
+
+func dfHash(path string) (string,error) {
+ f,err:=os.Open(path)
+ if err!=nil{return "",err}
+ defer f.Close()
+ h:=sha256.New()
+ if _,err=io.Copy(h,f);err!=nil{return "",err}
+ return hex.EncodeToString(h.Sum(nil)),nil
+}
+func dfFindTestClient() (string,error) {
+ entries,err:=os.ReadDir(`C:\`)
+ if err!=nil{return "",err}
+ for _,item:=range entries {
+  if !item.IsDir(){continue}
+  name:=strings.ToLower(item.Name())
+  if !strings.HasPrefix(name,"wow") || !strings.Contains(name,"kópia"){continue}
+  root:=filepath.Join(`C:\`,item.Name())
+  if _,err:=os.Stat(filepath.Join(root,"WoW.exe"));err==nil {
+   return root,nil
+  }
+ }
+ return "",errors.New(`HD test copy not found in C:\ (expected C:\wow – kópia)`)
+}
+func dfSubst(root string) (string,error) {
+ content,_:=exec.Command("subst.exe").CombinedOutput()
+ re:=)
  for _,match:=range re.FindAllStringSubmatch(string(content),-1) {
-  if strings.EqualFold(strings.TrimRight(match[2],"\"),strings.TrimRight(root,"\")) {
+  if strings.EqualFold(strings.TrimRight(match[2],`\`),strings.TrimRight(root,`\`)) {
    return strings.ToUpper(match[1])+":",nil
   }
  }
  for _,letter:=range "ZYXWVUTSR" {
   drive:=string(letter)+":"
-  if _,err:=os.Stat(drive+"\");err==nil {continue}
+  if _,err:=os.Stat(drive+`\`);err==nil {continue}
   if err:=exec.Command("subst.exe",drive,root).Run();err==nil{return drive,nil}
  }
  return "",errors.New("No available Windows drive letter for HD test")
@@ -77,8 +140,8 @@ func dfSubst(root string) (string,error) {
 func dfLaunchHD() error {
  root,err:=dfFindTestClient()
  if err!=nil{return err}
- if strings.EqualFold(filepath.Clean(root),filepath.Clean("C:\wow")) {
-  return errors.New("HD test refuses to alter original C:\wow")
+ if strings.EqualFold(filepath.Clean(root),filepath.Clean(`C:\wow`)) {
+  return errors.New(`HD test refuses to alter original C:\wow`)
  }
  setup:=filepath.Join(root,"_DawnForge_HD_Wowreeb_3_5")
  loader:=filepath.Join(setup,"wowreeb32.exe")
@@ -110,8 +173,8 @@ func dfLaunchHD() error {
   Config:[]dfHDConfig{{Name:"ClearWDB",Value:"0"}},
   Realm:[]dfHDRealm{{
    Name:"DawnForge HD Test",
-   Exe:dfHDExe{Path:drive+"\WoW.exe",SHA256:exeHash},
-   DLL:dfHDDLL{Path:drive+"\VanillaHelpers.dll"},
+   Exe:dfHDExe{Path:drive+`\WoW.exe`,SHA256:exeHash},
+   DLL:dfHDDLL{Path:drive+`\VanillaHelpers.dll`},
   }},
  }
  data,err:=xml.MarshalIndent(x,"","  ")
