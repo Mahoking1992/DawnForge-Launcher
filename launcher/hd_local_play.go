@@ -203,52 +203,17 @@ func dfStageBytes(data []byte,destination string) error {
  return nil
 }
 func dfLaunchHD() error {
- dfHDLog("HD PLAY pressed - using original PowerShell Start-Process method")
- root,err:=dfFindTestClient()
- if err!=nil{return err}
- dfHDLog("HD client: "+root)
- if strings.EqualFold(filepath.Clean(root),filepath.Clean("C:\\wow")) {return errors.New("Refusing to use original game for HD")}
- setup:=filepath.Join(root,"_DawnForge_HD_Wowreeb_3_5")
- loader:=filepath.Join(setup,"wowreeb32.exe")
- helper:=filepath.Join(root,"VanillaHelpers.dll")
- for _,file:=range []string{loader,filepath.Join(setup,"wowreeb32.dll"),helper,filepath.Join(setup,"config.xml"),filepath.Join(root,"WoW.exe")} {
-  if st,e:=os.Stat(file);e!=nil || st.IsDir(){return fmt.Errorf("HD file missing: %s",file)}
- }
- hash,err:=dfHash(helper)
- if err!=nil{return err}
- if !strings.EqualFold(hash,"1e74ddf6484c23482550d5f9e5f9d291085c4ac538d3b3ed9d87155521841196"){return errors.New("VanillaHelpers.dll verification failed")}
- for _,id:=range []string{"A","B","C","D","E","G","I","M","N","P","S","T","U"}{
-  if st,e:=os.Stat(filepath.Join(root,"Data","patch-"+id+".mpq"));e!=nil || st.Size()<512{return fmt.Errorf("HD patch %s is not installed",id)}
- }
- // The old working PowerShell script used an existing Windows SUBST mapping.
- // Keep that exact behavior, without creating any replacement wowreeb config.
- drive,err:=dfSubst(root)
- if err!=nil{return err}
- dfHDLog("HD mapped drive: "+drive)
- // This replicates the old SPUSTIT-HD.ps1 startup, using the original
- // wowreeb32.exe, its original config.xml and the PowerShell Start-Process
- // API instead of launching a fabricated isolated wowreeb session.
- // The game and configuration are never written by this function.
- quote:=func(x string)string{return "'"+strings.ReplaceAll(x,"'","''")+"'"}
- ps:="$ErrorActionPreference='Stop';"+
-    "$env:WOWREEB_ENTRY='DawnForge HD Test';"+
-    "$p=Start-Process -FilePath "+quote(loader)+" -WorkingDirectory "+quote(setup)+" -PassThru -ErrorAction Stop;"+
-    "Write-Output ('WOWREEB_PID='+$p.Id);"+
-    "Start-Sleep -Milliseconds 1300;"+
-    "if($p.HasExited){Write-Output ('WOWREEB_EXIT='+$p.ExitCode); if($p.ExitCode -ne 0){exit 13}}"
- // EncodedCommand uses UTF-16LE; avoid shell interpolation and quote issues.
+ dfHDLog("HD PLAY pressed - replaying working Z reuse + config + MPQ + PowerShell launch sequence")
+ ps:= "$ErrorActionPreference = 'Stop'\n$ProgressPreference = 'SilentlyContinue'\n$ids = @('A','B','C','D','E','G','I','M','N','P','S','T','U')\n$helperSha = '1e74ddf6484c23482550d5f9e5f9d291085c4ac538d3b3ed9d87155521841196'\nfunction Fail([string]$message) { throw $message }\nfunction Sha([string]$path) {\n $h = [System.Security.Cryptography.SHA256]::Create()\n $stream = [System.IO.File]::OpenRead($path)\n try { return ([BitConverter]::ToString($h.ComputeHash($stream))).Replace('-', '').ToLowerInvariant() }\n finally { $stream.Dispose(); $h.Dispose() }\n}\nfunction IsHDProcess([string]$original,[string]$mapped) {\n foreach($p in @(Get-CimInstance Win32_Process -Filter \"Name='WoW.exe'\" -ErrorAction Stop)) {\n  if (-not $p.ExecutablePath) { continue }\n  if ([string]::Equals($p.ExecutablePath,$original,[StringComparison]::OrdinalIgnoreCase) -or\n      [string]::Equals($p.ExecutablePath,$mapped,[StringComparison]::OrdinalIgnoreCase)) {return $true}\n }\n return $false\n}\n$copies = @(Get-ChildItem -LiteralPath 'C:\\' -Directory | Where-Object {\n $_.Name -match '(?i)^wow\\s*[-\\u2013\\u2014]\\s*k[o\\u00f3]pia$' -and\n (Test-Path -LiteralPath (Join-Path $_.FullName 'WoW.exe') -PathType Leaf)\n})\nif ($copies.Count -ne 1) {Fail 'Expected exactly one HD TEST client (C:\\wow - kopia).'}\n$game = [string]$copies[0].FullName\nif ($game -ieq 'C:\\wow') {Fail 'Original C:\\wow cannot be used as HD TEST'}\n$gameExe = Join-Path $game 'WoW.exe'\n$setup = Join-Path $game '_DawnForge_HD_Wowreeb_3_5'\n$loader = Join-Path $setup 'wowreeb32.exe'\n$injection = Join-Path $setup 'wowreeb32.dll'\n$vanillaHelper = Join-Path $game 'VanillaHelpers.dll'\n$disabled = Join-Path $game '_DawnForge_HD_DISABLED'\n$data = Join-Path $game 'Data'\nforeach($f in @($gameExe,$loader,$injection,$vanillaHelper)) {\n if (!(Test-Path -LiteralPath $f -PathType Leaf)){Fail ('Missing HD test file: '+$f)}\n}\nif ((Sha $vanillaHelper) -ne $helperSha) {Fail 'VanillaHelpers.dll SHA256 mismatch'}\n$mpqs = @()\nforeach($id in $ids) {\n $name = 'patch-'+$id+'.mpq'\n $active = Join-Path $data $name\n $off = Join-Path $disabled $name\n $a = Test-Path -LiteralPath $active -PathType Leaf\n $b = Test-Path -LiteralPath $off -PathType Leaf\n if ($a -eq $b){Fail ('Missing or duplicate HD module: '+$name)}\n $mpqs += [pscustomobject]@{Name=$name;Active=$active;Off=$off;Enable=$b}\n}\nAdd-Type -TypeDefinition @'\nusing System;\nusing System.Text;\nusing System.Runtime.InteropServices;\npublic static class DfDriveQueryHDTest {\n [DllImport(\"kernel32.dll\", CharSet=CharSet.Unicode, SetLastError=true)]\n public static extern uint QueryDosDevice(string name,StringBuilder target,int size);\n}\n'@\nfunction Get-AliasTarget([string]$letter) {\n $buffer = New-Object System.Text.StringBuilder 4096\n $count = [DfDriveQueryHDTest]::QueryDosDevice($letter+':',$buffer,$buffer.Capacity)\n if ($count -eq 0){return $null}\n $native = $buffer.ToString().Split([char]0)[0]\n if ($native.StartsWith('\\??\\')) {$native=$native.Substring(4)}\n if ($native.StartsWith('\\?\\')) {$native=$native.Substring(4)}\n return $native.TrimEnd('\\')\n}\n$mapped = $null\n$allLetters = @('Z','Y','X','W','V','U','T','S','R','Q','P','O','N','M','L','K','J','I','H','G','F','E','D')\nforeach($letter in $allLetters) {\n $target = Get-AliasTarget $letter\n if ($target -and [string]::Equals($target,$game.TrimEnd('\\'),[StringComparison]::OrdinalIgnoreCase)) {\n  $mapped = $letter+':'; Write-Output ('REUSED_HD_DRIVE='+$mapped);break\n }\n}\nif (-not $mapped) {\n $subst = Join-Path $env:SystemRoot 'System32\\subst.exe'\n foreach($letter in $allLetters) {\n  if (Get-AliasTarget $letter) {continue}\n  if (Test-Path -LiteralPath ($letter+':\\')) {continue}\n  if (Get-PSDrive -Name $letter -PSProvider FileSystem -ErrorAction SilentlyContinue) {continue}\n  & $subst ($letter+':') $game | Out-Null\n  if ($LASTEXITCODE -ne 0) {continue}\n  $target = Get-AliasTarget $letter\n  if ([string]::Equals($target,$game.TrimEnd('\\'),[StringComparison]::OrdinalIgnoreCase)){\n   $mapped=$letter+':';Write-Output ('CREATED_HD_DRIVE='+$mapped);break\n  }\n  Fail ('New HD virtual drive could not be verified: '+$letter)\n }\n}\nif (-not $mapped) {Fail 'No HD virtual drive is available'}\n$aliasExe = $mapped+'\\WoW.exe'\n$aliasHelper = $mapped+'\\VanillaHelpers.dll'\nif (!(Test-Path -LiteralPath $aliasExe -PathType Leaf)) {Fail ('No mapped WoW.exe at '+$aliasExe)}\nif (!(Test-Path -LiteralPath $aliasHelper -PathType Leaf)) {Fail ('No mapped VanillaHelpers at '+$aliasHelper)}\nif ((Sha $aliasExe) -ne (Sha $gameExe)){Fail 'Mapped WoW.exe checksum mismatch'}\nif ((Sha $aliasHelper) -ne $helperSha){Fail 'Mapped helper checksum mismatch'}\nif (IsHDProcess $gameExe $aliasExe) {\n Write-Output 'HD_ALREADY_RUNNING';exit 0\n}\n$gameHash = Sha $gameExe\n$config = Join-Path $setup 'config.xml'\n$newXml = @\"\n<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<wowreeb>\n  <Config Name=\"ClearWDB\" Value=\"0\" />\n  <Realm Name=\"DawnForge HD Test\">\n    <Exe Path=\"$aliasExe\" SHA256=\"$gameHash\" />\n    <DLL Path=\"$aliasHelper\" />\n  </Realm>\n</wowreeb>\n\"@\nif (Test-Path -LiteralPath $config -PathType Leaf) {\n $old = [IO.File]::ReadAllText($config)\n if ($old.Trim() -ne $newXml.Trim()) {\n  $backup=Join-Path $setup ('config-before-hd-play-'+(Get-Date -Format 'yyyyMMdd-HHmmssfff')+'.xml')\n  Copy-Item -LiteralPath $config -Destination $backup -ErrorAction Stop\n }\n}\n[IO.File]::WriteAllText($config,$newXml,(New-Object Text.UTF8Encoding($false)))\n[xml]$check = [IO.File]::ReadAllText($config)\nif ($check.wowreeb.Realm.Exe.Path -cne $aliasExe) {Fail 'Wowreeb XML validation failed'}\n$moved = @()\ntry {\n foreach($item in $mpqs) {\n  if ($item.Enable) {\n   if(Test-Path -LiteralPath $item.Active){Fail ('Unexpected duplicate HD module: '+$item.Name)}\n   Move-Item -LiteralPath $item.Off -Destination $item.Active -ErrorAction Stop\n   $moved += $item\n  }\n }\n} catch {\n foreach($item in $moved) {if(Test-Path -LiteralPath $item.Active){Move-Item -LiteralPath $item.Active -Destination $item.Off -ErrorAction SilentlyContinue}}\n throw\n}\nWrite-Output 'ALL_13_HD_PATCHES_ACTIVE'\n$env:WOWREEB_ENTRY = 'DawnForge HD Test'\n$launched = Start-Process -FilePath $loader -WorkingDirectory $setup -PassThru -ErrorAction Stop\nWrite-Output ('WOWREEB_PID='+$launched.Id)\n# WoW can appear after wowreeb has already exited successfully.\n# Do not claim failure after a fixed three-second interval.\n$seen = $false\nfor($n=0; $n -lt 20; $n++) {\n Start-Sleep -Milliseconds 500\n if (IsHDProcess $gameExe $aliasExe) {$seen=$true;break}\n}\nif ($seen) {\n Write-Output 'CONFIRMED_HD_GAME_RUNNING'\n} else {\n $launched.Refresh()\n if ($launched.HasExited) {\n  Write-Output ('WOWREEB_EXIT='+$launched.ExitCode)\n  if ($launched.ExitCode -ne 0) {Fail ('wowreeb reported exit code '+$launched.ExitCode)}\n }\n Write-Output 'HD_GAME_NOT_YET_VERIFIED_CHECK_WINDOW'\n}\n"
  encoded:=utf16.Encode([]rune(ps))
- raw:=make([]byte,len(encoded)*2)
- for i,v:=range encoded {raw[2*i]=byte(v);raw[2*i+1]=byte(v>>8)}
- cmd:=exec.Command("powershell.exe","-NoProfile","-NonInteractive","-EncodedCommand",base64.StdEncoding.EncodeToString(raw))
- cmd.Dir=setup
+ bytesUTF16:=make([]byte,len(encoded)*2)
+ for i,v:=range encoded { bytesUTF16[2*i]=byte(v); bytesUTF16[2*i+1]=byte(v>>8) }
+ cmd:=exec.Command("powershell.exe","-NoProfile","-NonInteractive","-EncodedCommand",base64.StdEncoding.EncodeToString(bytesUTF16))
  cmd.SysProcAttr=&syscall.SysProcAttr{HideWindow:true,CreationFlags:0x08000000}
  output,err:=cmd.CombinedOutput()
- response:=strings.TrimSpace(string(output))
- dfHDLog("PowerShell Start-Process result: "+response)
- if err!=nil {
-  return fmt.Errorf("Original PowerShell HD startup failed: %w. %s",err,response)
- }
- dfHDLog("PowerShell completed; actual HD game window still requires visual verification")
+ result:=strings.TrimSpace(string(output))
+ dfHDLog("HD PowerShell sequence: "+result)
+ if err!=nil {return fmt.Errorf("HD launch sequence failed: %w; %s",err,result)}
+ dfHDLog("HD launch sequence finished - game visibility must be confirmed by user")
  return nil
 }
