@@ -141,6 +141,13 @@ func main() {
         }
     }()
 
+    // TEST BRANCH ONLY: show text-only status and graphics selection without
+    // modifying the embedded original launcher executable.
+    panel, panelErr := dfCreatePanel(originalHwnd)
+    if panelErr == nil && panel != nil {
+        defer panel.close()
+    }
+
     done := make(chan struct{})
     go func() {
         _ = cmd.Wait()
@@ -157,6 +164,8 @@ func main() {
             procShowWindow.Call(overlay, SW_HIDE)
             return
         case <-tick.C:
+            dfPump()
+            if panel != nil { panel.tick() }
             idx, r, ok := hoveredRect(originalHwnd)
             if !ok {
                 if last != -1 {
