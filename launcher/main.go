@@ -207,14 +207,21 @@ func ensureInstalled() (bool, string, error) {
     }
 
     dir := filepath.Join(local, "DawnForge", "Launcher")
-    wrapper := filepath.Join(dir, "DawnForgeLauncher.exe")
-    core := filepath.Join(dir, "DawnForgeOriginal.exe")
+    wrapperName := "DawnForgeLauncher.exe"
 
     self, err := os.Executable()
     if err != nil {
         return false, "", err
     }
     self, _ = filepath.Abs(self)
+    isTest := strings.Contains(strings.ToUpper(filepath.Base(self)), "-TEST.EXE") ||
+        strings.EqualFold(filepath.Base(filepath.Dir(self)), "LauncherTest-v1.0.12")
+    if isTest {
+        dir = filepath.Join(local, "DawnForge", "LauncherTest-v1.0.12")
+        wrapperName = "DawnForgeLauncher-v1.0.12-TEST.exe"
+    }
+    wrapper := filepath.Join(dir, wrapperName)
+    core := filepath.Join(dir, "DawnForgeOriginal.exe")
 
     if !samePath(self, wrapper) {
         if err := os.MkdirAll(dir, 0755); err != nil {
@@ -227,7 +234,7 @@ func ensureInstalled() (bool, string, error) {
             return false, "", err
         }
 
-        createShortcuts(wrapper, core)
+        if !isTest { createShortcuts(wrapper, core) }
 
         c := exec.Command(wrapper)
         c.Dir = dir
@@ -244,7 +251,7 @@ func ensureInstalled() (bool, string, error) {
         }
     }
 
-    createShortcuts(wrapper, core)
+    if !isTest { createShortcuts(wrapper, core) }
     return false, core, nil
 }
 
