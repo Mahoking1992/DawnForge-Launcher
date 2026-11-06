@@ -1,9 +1,6 @@
 package main
 
 import (
-    _ "embed"
-    "bytes"
-    "crypto/sha256"
     "errors"
     "fmt"
     "io"
@@ -23,8 +20,8 @@ const (
     baseH   = 972
 )
 
-//go:embed DawnForgeOriginal.exe
-var originalLauncher []byte
+// TEST wrapper loads an already-installed original DawnForge client read-only.
+// Production packaging will bundle that client again after final approval.
 
 var (
     user32   = syscall.NewLazyDLL("user32.dll")
@@ -196,57 +193,32 @@ func main() {
 }
 
 func ensureInstalled() (bool, string, error) {
-    // TEST BUILDS MUST NEVER REPLACE THEMSELVES.
-    // Windows locks running EXEs. Old test builds copied the downloaded EXE
-    // over a running %LOCALAPPDATA%\DawnForge\LauncherTest\DawnForgeLauncher-TEST.exe
-    // which caused "rename ... Access is denied" and blocked startup.
-    //
-    // Run the test wrapper from wherever it was extracted. Only materialize
-    // the embedded *original* launcher, never the test wrapper or shortcuts.
+    // No self-install, no EXE replacement, no shortcut creation.
+    // Re-use the *already installed* original launcher in read-only mode.
+    // This is only for testing on a PC that already runs DawnForge.
     local := os.Getenv("LOCALAPPDATA")
-    if local == "" {
-        return false, "", errors.New("LOCALAPPDATA is unavailable")
+    if local == "" {return false, "", errors.New("LOCALAPPDATA is unavailable")}
+    candidates := []string{
+        filepath.Join(local, "DawnForge", "LauncherTest", "DawnForgeOriginal.exe"),
+        filepath.Join(local, "DawnForge", "Launcher", "DawnForgeOriginal.exe"),
     }
-    dir := filepath.Join(local, "DawnForge", "LauncherTest")
-    if err := os.MkdirAll(dir, 0755); err != nil {
-        return false, "", err
-    }
+    // Previous test versions may have put a versioned core under LauncherTest.
+    matches, _ := filepath.Glob(filepath.Join(local, "DawnForge", "LauncherTest", "DawnForgeOriginal-*.exe"))
+    candidates = append(candidates, matches...)
 
-    core := filepath.Join(dir, "DawnForgeOriginal.exe")
-    if data, err := os.ReadFile(core); err == nil {
-        if bytes.Equal(data, originalLauncher) {
+    for _, core := range candidates {
+        file, err := os.Open(core)
+        if err != nil {continue}
+        stat, err := file.Stat()
+        header := make([]byte,2)
+        _, readErr := io.ReadFull(file,header)
+        _ = file.Close()
+        if err == nil && readErr == nil && stat.Size() == 8619520 &&
+            header[0] == 'M' && header[1] == 'Z' {
             return false, core, nil
         }
-        // An existing different version might still be in use.
-        // Never overwrite or delete it. Use a versioned file instead.
-        sum := sha256.Sum256(originalLauncher)
-        core = filepath.Join(dir, fmt.Sprintf("DawnForgeOriginal-%x.exe", sum[:8]))
-    } else if !os.IsNotExist(err) {
-        return false, "", fmt.Errorf("read original test core: %w", err)
     }
-
-    if data, err := os.ReadFile(core); err == nil {
-        if bytes.Equal(data, originalLauncher) {
-            return false, core, nil
-        }
-        return false, "", fmt.Errorf("existing test core does not match embedded launcher: %s", core)
-    } else if !os.IsNotExist(err) {
-        return false, "", fmt.Errorf("read test core: %w", err)
-    }
-
-    // Exclusive creation prevents accidentally overwriting another process.
-    out, err := os.OpenFile(core, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0755)
-    if err != nil {
-        return false, "", fmt.Errorf("create original test core: %w", err)
-    }
-    _, writeErr := out.Write(originalLauncher)
-    closeErr := out.Close()
-    if writeErr != nil || closeErr != nil {
-        _ = os.Remove(core) // only the exclusively-created incomplete file
-        if writeErr != nil {return false, "", writeErr}
-        return false, "", closeErr
-    }
-    return false, core, nil
+    return false, "", errors.New("Original DawnForge launcher not found. Run the installed DawnForge launcher first. No files were changed.")
 }
 
 func copyFile(src, dst string) error {
