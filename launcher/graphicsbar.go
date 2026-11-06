@@ -308,8 +308,8 @@ func pollWindowsMessages(){
     for {
         ok,_,_:=procPeekMessageW.Call(uintptr(unsafe.Pointer(&m)),0,0,0,pmRemove)
         if ok==0{return}
-        procTranslateMessage.Call(uintptr(unsafe.Pointer(&m))
-        procDispatchMessageW.Call(uintptr(unsafe.Pointer(&m))
+        procTranslateMessage.Call(uintptr(unsafe.Pointer(&m)))
+        procDispatchMessageW.Call(uintptr(unsafe.Pointer(&m)))
     }
 }
 func destroyGraphicsBar(bar *graphicsBarState){
