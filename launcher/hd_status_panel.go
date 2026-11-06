@@ -129,7 +129,7 @@ func dfCreatePanel(parent uintptr) (*dfPanel,error) {
  wc:=WNDCLASSEX{CbSize:uint32(unsafe.Sizeof(WNDCLASSEX{})),
   LpfnWndProc:syscall.NewCallback(dfWindowProc),
   HInstance:inst,LpszClassName:cls}
- if ok,_,e:=procRegisterClassExW.Call(uintptr(unsafe.Pointer(&wc));ok==0 {
+ if ok,_,e:=procRegisterClassExW.Call(uintptr(unsafe.Pointer(&wc)));ok==0 {
   return nil,fmt.Errorf("register status panel: %v",e)
  }
  currentDF=p
