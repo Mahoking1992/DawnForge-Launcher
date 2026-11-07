@@ -55,7 +55,7 @@ func createLauncherChrome(orig uintptr)(*launcherChrome,error){
         HInstance:hInst,
         LpszClassName:cls,
     }
-    if result,_,e:=procRegisterClassExW.Call(uintptr(unsafe.Pointer(&wc));result==0&&e!=syscall.Errno(1410){
+    if result,_,e:=procRegisterClassExW.Call(uintptr(unsafe.Pointer(&wc)));result==0&&e!=syscall.Errno(1410){
         return nil,fmt.Errorf("register chrome overlay: %v",e)
     }
     hwnd,_,e:=procCreateWindowExW.Call(
