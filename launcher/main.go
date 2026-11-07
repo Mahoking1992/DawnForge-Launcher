@@ -149,6 +149,13 @@ func main() {
         messageBoxFallback("Graphics status bar disabled: " + barErr.Error())
     }
 
+    chromeLayer, chromeErr := createLauncherChrome(originalHwnd)
+    if chromeErr != nil {
+        // Keep the original launcher functional even if decorative icons fail.
+        chromeLayer = nil
+    }
+    if chromeLayer != nil { defer destroyLauncherChrome(chromeLayer) }
+
     done := make(chan struct{})
     go func() {
         _ = cmd.Wait()
@@ -172,6 +179,9 @@ func main() {
             pollWindowsMessages()
             if bar != nil {
                 updateGraphicsBarPosition(bar, originalHwnd)
+            }
+            if chromeLayer != nil {
+                updateLauncherChromePosition(chromeLayer, originalHwnd)
             }
             idx, r, ok := hoveredRect(originalHwnd)
             if !ok {
