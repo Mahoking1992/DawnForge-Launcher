@@ -132,31 +132,32 @@ func main() {
         return
     }
 
-    panel, panelErr := startDashboard(originalHwnd)
-    if panelErr != nil {
-        messageBoxFallback("DawnForge dashboard: " + panelErr.Error())
-        _ = cmd.Process.Kill()
+    // Restore the original launcher completely. The only added UI is a small
+    // two-choice graphic selector replacing its GAME VERSION box.
+    chooser, chooserErr := newGraphicsBar(originalHwnd)
+    if chooserErr != nil {
+        messageBoxFallback("DawnForge graphics selector: " + chooserErr.Error())
+        _ = cmd.Wait()
         return
     }
-    defer closeDashboard(panel)
+    defer destroyGraphicsBar(chooser)
 
     done := make(chan struct{})
     go func() {
         _ = cmd.Wait()
         close(done)
     }()
-    dashboardPolling(panel,done)
 
-    tick := time.NewTicker(25*time.Millisecond)
+    tick := time.NewTicker(25 * time.Millisecond)
     defer tick.Stop()
     for {
         select {
         case <-done:
-            procShowWindow.Call(panel.hwnd,SW_HIDE)
+            procShowWindow.Call(chooser.hwnd, SW_HIDE)
             return
         case <-tick.C:
             pollWindowsMessages()
-            updateDashboardPosition(panel,originalHwnd)
+            updateGraphicsBarPosition(chooser, originalHwnd)
         }
     }
 }
