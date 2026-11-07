@@ -132,80 +132,31 @@ func main() {
         return
     }
 
-    overlay, brush, err := createOverlay()
-    if err != nil {
-        _ = cmd.Wait()
+    panel, panelErr := startDashboard(originalHwnd)
+    if panelErr != nil {
+        messageBoxFallback("DawnForge dashboard: " + panelErr.Error())
+        _ = cmd.Process.Kill()
         return
     }
-    defer func() {
-        procDestroyWindow.Call(overlay)
-        if brush != 0 {
-            procDeleteObject.Call(brush)
-        }
-    }()
-
-    bar, barErr := newGraphicsBar(originalHwnd)
-    if barErr != nil {
-        messageBoxFallback("Graphics status bar disabled: " + barErr.Error())
-    }
-
-    chromeLayer, chromeErr := createLauncherChrome(originalHwnd)
-    if chromeErr != nil {
-        // Keep the original launcher functional even if decorative icons fail.
-        chromeLayer = nil
-    }
-    if chromeLayer != nil { defer destroyLauncherChrome(chromeLayer) }
+    defer closeDashboard(panel)
 
     done := make(chan struct{})
     go func() {
         _ = cmd.Wait()
         close(done)
     }()
-    if bar != nil {
-        defer destroyGraphicsBar(bar)
-        startGraphicsStatusPolling(bar, done)
-    }
+    dashboardPolling(panel,done)
 
-    tick := time.NewTicker(25 * time.Millisecond)
+    tick := time.NewTicker(25*time.Millisecond)
     defer tick.Stop()
-
-    last := -1
     for {
         select {
         case <-done:
-            procShowWindow.Call(overlay, SW_HIDE)
+            procShowWindow.Call(panel.hwnd,SW_HIDE)
             return
         case <-tick.C:
             pollWindowsMessages()
-            if bar != nil {
-                updateGraphicsBarPosition(bar, originalHwnd)
-            }
-            if chromeLayer != nil {
-                updateLauncherChromePosition(chromeLayer, originalHwnd)
-            }
-            idx, r, ok := hoveredRect(originalHwnd)
-            if !ok {
-                if last != -1 {
-                    procShowWindow.Call(overlay, SW_HIDE)
-                    last = -1
-                }
-                continue
-            }
-            last = idx
-            x, y, w, h := scaleRectToWindow(originalHwnd, r)
-            if w <= 0 || h <= 0 {
-                continue
-            }
-            procSetWindowPos.Call(
-                overlay,
-                hwndTop,
-                uintptr(x),
-                uintptr(y),
-                uintptr(w),
-                uintptr(h),
-                SWP_NOACTIVATE|SWP_SHOWWINDOW,
-            )
-            procShowWindow.Call(overlay, SW_SHOWNOACTIVATE)
+            updateDashboardPosition(panel,originalHwnd)
         }
     }
 }
