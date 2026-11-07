@@ -5,8 +5,10 @@ on:
   push:
     branches:
       - main
+      - "feature/hd-r2-autoupdate"
     paths:
       - "launcher/**"
+      - "download/hd-manifest.json"
       - ".github/workflows/build-launcher.yml"
 
 permissions:
@@ -23,6 +25,25 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: "1.23.x"
+
+      - name: Validate HD manifest and original R2 package size
+        run: |
+          python3 - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          p = json.loads(Path("download/hd-manifest.json").read_text())
+          names = ["patch-" + c + ".mpq" for c in "ABCDEGIMNPSTU"]
+          assert p["version"] == "1"
+          assert p["base_url"] == "https://hd.dawnforge.eu"
+          assert [f["name"] for f in p["files"]] == names
+          assert sum(f["size"] for f in p["files"]) == 11363712090
+          assert all(len(f["sha256"]) == 64 and all(c in "0123456789abcdef" for c in f["sha256"]) for f in p["files"])
+          print("HD manifest PASS: 13 files / 11363712090 bytes")
+          PY
+
+      - name: Test HD package validation and safe activation
+        working-directory: launcher
+        run: go test ./internal/hd ./internal/realm
 
       - name: Recover exact original DawnForge launcher
         run: |
@@ -48,6 +69,9 @@ jobs:
           PY
           test "$(stat -c%s launcher/DawnForgeOriginal.exe)" = "8619520"
 
+      - name: Embed verified offline HD manifest for Classic switching
+        run: cp download/hd-manifest.json launcher/hd-manifest.json
+
       - name: Build Windows hover wrapper
         working-directory: launcher
         env:
@@ -59,18 +83,42 @@ jobs:
           test -s DawnForgeLauncher.exe
           sha256sum DawnForgeLauncher.exe
 
+      - name: Upload Windows test launcher
+        if: github.ref == 'refs/heads/feature/hd-r2-autoupdate'
+        uses: actions/upload-artifact@v4
+        with:
+          name: DawnForgeLauncher-v1.0.12-Windows-TEST
+          path: launcher/DawnForgeLauncher.exe
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Publish isolated public Windows TEST EXE
+        if: github.ref == 'refs/heads/feature/hd-r2-autoupdate'
+        run: |
+          mkdir -p testing
+          cp launcher/DawnForgeLauncher.exe testing/DawnForgeLauncher-v1.0.12-TEST.exe
+          sha256sum testing/DawnForgeLauncher-v1.0.12-TEST.exe
+          git config user.name "DawnForge Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add testing/DawnForgeLauncher-v1.0.12-TEST.exe
+          if ! git diff --cached --quiet; then
+            git commit -m "Publish isolated v1.0.12 Windows test binary"
+            git push origin HEAD:feature/hd-r2-autoupdate
+          fi
+
       - name: Publish download files
+        if: github.ref == 'refs/heads/main'
         run: |
           mkdir -p download
           cp launcher/DawnForgeLauncher.exe download/DawnForgeLauncher.exe
           cd launcher
           zip -9 -j ../download/DawnForgeLauncherSetup.zip DawnForgeLauncher.exe
-          cp ../download/DawnForgeLauncherSetup.zip ../download/DawnForgeLauncherSetup_v1.0.11.zip
+          cp ../download/DawnForgeLauncherSetup.zip ../download/DawnForgeLauncherSetup_v1.0.12.zip
           cd ..
           SHA="$(sha256sum download/DawnForgeLauncher.exe | awk '{print $1}')"
           cat > download/launcher-update.json <<JSON
           {
-            "version": "1.0.11",
+            "version": "1.0.12",
             "url": "https://raw.githubusercontent.com/Mahoking1992/DawnForge-Launcher/main/download/DawnForgeLauncher.exe",
             "sha256": "$SHA"
           }
@@ -79,13 +127,14 @@ jobs:
           cat download/launcher-update.json
 
       - name: Commit generated launcher
+        if: github.ref == 'refs/heads/main'
         run: |
           git config user.name "DawnForge Bot"
           git config user.email "actions@users.noreply.github.com"
-          git add download/DawnForgeLauncher.exe download/DawnForgeLauncherSetup.zip download/DawnForgeLauncherSetup_v1.0.11.zip download/launcher-update.json
+          git add download/DawnForgeLauncher.exe download/DawnForgeLauncherSetup.zip download/DawnForgeLauncherSetup_v1.0.12.zip download/launcher-update.json
           if git diff --cached --quiet; then
             echo "Generated launcher is already current."
           else
-            git commit -m "Publish DawnForge Launcher v1.0.11"
+            git commit -m "Publish DawnForge Launcher v1.0.12"
             git push
           fi

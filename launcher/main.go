@@ -105,6 +105,9 @@ var hits = []hitRect{
 
 func main() {
     runtime.LockOSThread()
+    if handleHDCommand() { return }
+
+    if updateInstalledLauncher() { return }
 
     installed, core, err := ensureInstalled()
     if err != nil {
@@ -129,17 +132,15 @@ func main() {
         return
     }
 
-    overlay, brush, err := createOverlay()
-    if err != nil {
+    // Restore the original launcher completely. The only added UI is a small
+    // two-choice graphic selector replacing its GAME VERSION box.
+    chooser, chooserErr := newGraphicsBar(originalHwnd)
+    if chooserErr != nil {
+        messageBoxFallback("DawnForge graphics selector: " + chooserErr.Error())
         _ = cmd.Wait()
         return
     }
-    defer func() {
-        procDestroyWindow.Call(overlay)
-        if brush != 0 {
-            procDeleteObject.Call(brush)
-        }
-    }()
+    defer destroyGraphicsBar(chooser)
 
     done := make(chan struct{})
     go func() {
@@ -149,37 +150,14 @@ func main() {
 
     tick := time.NewTicker(25 * time.Millisecond)
     defer tick.Stop()
-
-    last := -1
     for {
         select {
         case <-done:
-            procShowWindow.Call(overlay, SW_HIDE)
+            procShowWindow.Call(chooser.hwnd, SW_HIDE)
             return
         case <-tick.C:
-            idx, r, ok := hoveredRect(originalHwnd)
-            if !ok {
-                if last != -1 {
-                    procShowWindow.Call(overlay, SW_HIDE)
-                    last = -1
-                }
-                continue
-            }
-            last = idx
-            x, y, w, h := scaleRectToWindow(originalHwnd, r)
-            if w <= 0 || h <= 0 {
-                continue
-            }
-            procSetWindowPos.Call(
-                overlay,
-                hwndTop,
-                uintptr(x),
-                uintptr(y),
-                uintptr(w),
-                uintptr(h),
-                SWP_NOACTIVATE|SWP_SHOWWINDOW,
-            )
-            procShowWindow.Call(overlay, SW_SHOWNOACTIVATE)
+            pollWindowsMessages()
+            updateGraphicsBarPosition(chooser, originalHwnd)
         }
     }
 }
@@ -191,14 +169,21 @@ func ensureInstalled() (bool, string, error) {
     }
 
     dir := filepath.Join(local, "DawnForge", "Launcher")
-    wrapper := filepath.Join(dir, "DawnForgeLauncher.exe")
-    core := filepath.Join(dir, "DawnForgeOriginal.exe")
+    wrapperName := "DawnForgeLauncher.exe"
 
     self, err := os.Executable()
     if err != nil {
         return false, "", err
     }
     self, _ = filepath.Abs(self)
+    isTest := strings.Contains(strings.ToUpper(filepath.Base(self)), "-TEST.EXE") ||
+        strings.EqualFold(filepath.Base(filepath.Dir(self)), "LauncherTest-v1.0.12")
+    if isTest {
+        dir = filepath.Join(local, "DawnForge", "LauncherTest-v1.0.12")
+        wrapperName = "DawnForgeLauncher-v1.0.12-TEST.exe"
+    }
+    wrapper := filepath.Join(dir, wrapperName)
+    core := filepath.Join(dir, "DawnForgeOriginal.exe")
 
     if !samePath(self, wrapper) {
         if err := os.MkdirAll(dir, 0755); err != nil {
@@ -211,7 +196,7 @@ func ensureInstalled() (bool, string, error) {
             return false, "", err
         }
 
-        createShortcuts(wrapper, core)
+        if !isTest { createShortcuts(wrapper, core) }
 
         c := exec.Command(wrapper)
         c.Dir = dir
@@ -228,7 +213,7 @@ func ensureInstalled() (bool, string, error) {
         }
     }
 
-    createShortcuts(wrapper, core)
+    if !isTest { createShortcuts(wrapper, core) }
     return false, core, nil
 }
 
@@ -259,7 +244,10 @@ func copyFile(src, dst string) error {
 
 func createShortcuts(wrapper, iconSource string) {
     ps := fmt.Sprintf(
-        `$ws=New-Object -ComObject WScript.Shell; $d=[Environment]::GetFolderPath('Desktop'); $s=$ws.CreateShortcut((Join-Path $d 'DawnForge Launcher.lnk')); $s.TargetPath='%s'; $s.WorkingDirectory='%s'; $s.IconLocation='%s,0'; $s.Save(); $m=Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'; $s2=$ws.CreateShortcut((Join-Path $m 'DawnForge Launcher.lnk')); $s2.TargetPath='%s'; $s2.WorkingDirectory='%s'; $s2.IconLocation='%s,0'; $s2.Save()`,
+        `$ws=New-Object -ComObject WScript.Shell; $d=[Environment]::GetFolderPath('Desktop'); $s=$ws.CreateShortcut((Join-Path $d 'DawnForge Launcher.lnk')); $s.TargetPath='%s'; $s.WorkingDirectory='%s'; $s.IconLocation='%s,0'; $s.Save(); $m=Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'; $s2=$ws.CreateShortcut((Join-Path $m 'DawnForge Launcher.lnk')); $s2.TargetPath='%s'; $s2.WorkingDirectory='%s'; $s2.IconLocation='%s,0'; $s2.Save(); $s3=$ws.CreateShortcut((Join-Path $d 'DawnForge HD Graphics.lnk')); $s3.TargetPath='%s'; $s3.Arguments='--hd-manager'; $s3.WorkingDirectory='%s'; $s3.IconLocation='%s,0'; $s3.Save()`,
+        psQuote(wrapper),
+        psQuote(filepath.Dir(wrapper)),
+        psQuote(iconSource),
         psQuote(wrapper),
         psQuote(filepath.Dir(wrapper)),
         psQuote(iconSource),
