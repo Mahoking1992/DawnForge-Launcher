@@ -158,35 +158,38 @@ func drawDashboardScreen(hwnd uintptr){
  snap,selected,busy,note:=d.server,d.selected,d.busy,d.warning
  d.mu.Unlock()
  toX:=func(x int)int{return x*w/baseW}
- toY:=func(y int)int{return y*h/baseH}
+ // Reference layout: navigation begins above the original status strip.
+ // Scale all coordinates together so nothing overlaps or escapes the panel.
+ toY:=func(y int)int{return (350+(y-503)*135/100)*h/baseH}
+ sizeY:=func(height int)int{return height*135*h/(100*baseH)}
  scaleRect:=func(x,y,ww,hh int)RECT{
-  return barRect(toX(x),toY(y),toX(ww),toY(hh))
+  return barRect(toX(x),toY(y),toX(ww),sizeY(hh))
  }
  // Colour-key transparent outside the new unified interface.
  fillBarRect(hdc,barRect(0,0,w,h),rgbBar(2,3,4))
 
  panel:=rgbBar(10,16,23)
  edge:=rgbBar(128,91,44)
- drawDashboardBorder(hdc,toX(34),toY(503),toX(1390),toY(361),22,panel,edge)
+ drawDashboardBorder(hdc,toX(34),toY(503),toX(1390),sizeY(361),22,panel,edge)
  drawDashboardLine(hdc,toX(44),toY(571),toX(1370))
 
  // Row 1: actual navigation controls in the order shown on the supplied mockup.
- dashButton(hdc,d,toX(52),toY(511),toX(220),toY(54),"Play","▶",true,false,false)
- dashButton(hdc,d,toX(282),toY(511),toX(257),toY(54),"Install / Repair","⇩",false,false,false)
- dashButton(hdc,d,toX(549),toY(511),toX(171),toY(54),"Update","↻",false,false,false)
- dashButton(hdc,d,toX(730),toY(511),toX(191),toY(54),"Graphics","▣",false,false,false)
- dashButton(hdc,d,toX(931),toY(511),toX(220),toY(54),"Settings","⚙",false,false,false)
- dashButton(hdc,d,toX(1161),toY(511),toX(238),toY(54),"About","ⓘ",false,false,false)
+ dashButton(hdc,d,toX(52),toY(511),toX(220),sizeY(54),"Play","▶",true,false,false)
+ dashButton(hdc,d,toX(282),toY(511),toX(257),sizeY(54),"Install / Repair","⇩",false,false,false)
+ dashButton(hdc,d,toX(549),toY(511),toX(171),sizeY(54),"Update","↻",false,false,false)
+ dashButton(hdc,d,toX(730),toY(511),toX(191),sizeY(54),"Graphics","▣",false,false,false)
+ dashButton(hdc,d,toX(931),toY(511),toX(220),sizeY(54),"Settings","⚙",false,false,false)
+ dashButton(hdc,d,toX(1161),toY(511),toX(238),sizeY(54),"About","ⓘ",false,false,false)
 
  // Row 2: two real modes + a visibly unavailable future third mode.
- dashButton(hdc,d,toX(90),toY(585),toX(376),toY(59),"Classic (Old Vanilla)","✦",false,selected=="ORIGINAL",busy)
- dashButton(hdc,d,toX(480),toY(585),toX(407),toY(59),"Modern Vanilla","✦",false,selected=="MODERN",busy)
- dashButton(hdc,d,toX(901),toY(585),toX(448),toY(59),"Ultra HD (Not available)","HD",false,false,true)
+ dashButton(hdc,d,toX(90),toY(585),toX(376),sizeY(59),"Classic (Old Vanilla)","✦",false,selected=="ORIGINAL",busy)
+ dashButton(hdc,d,toX(480),toY(585),toX(407),sizeY(59),"Modern Vanilla","✦",false,selected=="MODERN",busy)
+ dashButton(hdc,d,toX(901),toY(585),toX(448),sizeY(59),"Ultra HD (Not available)","HD",false,false,true)
 
  // Row 3: ONE status area; the core's old ONLINE region is fully hidden.
- drawDashboardBorder(hdc,toX(48),toY(658),toX(1354),toY(77),12,rgbBar(13,25,34),rgbBar(50,91,119))
+ drawDashboardBorder(hdc,toX(48),toY(658),toX(1354),sizeY(77),12,rgbBar(13,25,34),rgbBar(50,91,119))
  for _,v:=range []int{315,603,864,1136}{
-  fillBarRect(hdc,barRect(toX(v),toY(671),2,toY(52)),rgbBar(63,88,105))
+  fillBarRect(hdc,barRect(toX(v),toY(671),2,sizeY(52)),rgbBar(63,88,105))
  }
  drawStatus:=func(x,y,width int,heading,value string,valueColor uintptr){
   dashText(hdc,heading,scaleRect(x,y,width,27),rgbBar(158,199,222),d.titleFont,true)
@@ -199,19 +202,19 @@ func drawDashboardScreen(hwnd uintptr){
  drawStatus(318,663,281,"PLAYERS ONLINE",snap.Players,rgbBar(95,236,218))
  drawStatus(608,663,251,"UPTIME",snap.Uptime,rgbBar(242,232,216))
  drawStatus(870,663,259,"GAME VERSION","1.12.1",rgbBar(236,232,228))
- dashButton(hdc,d,toX(1152),toY(674),toX(229),toY(47),"Website","◎",false,false,false)
+ dashButton(hdc,d,toX(1152),toY(674),toX(229),sizeY(47),"Website","◎",false,false,false)
 
  // Row 4: preserve install/update/play behavior, but replace their old
  // drawn controls with coherent high-contrast buttons.
  drawDashboardLine(hdc,toX(47),toY(749),toX(1362))
- dashButton(hdc,d,toX(56),toY(760),toX(321),toY(83),"INSTALL","⇩",false,true,false)
+ dashButton(hdc,d,toX(56),toY(760),toX(321),sizeY(83),"INSTALL","⇩",false,true,false)
  dashText(hdc,"GAME CLIENT",scaleRect(390,764,465,30),rgbBar(221,192,143),d.titleFont,true)
  statusText:="Use Install / Repair to check game files"
  if busy {statusText="Working on the selected graphics mode..."}
  if note!="" {statusText=note}
  dashText(hdc,statusText,scaleRect(394,796,463,45),rgbBar(216,226,233),d.font,true)
- dashButton(hdc,d,toX(881),toY(760),toX(233),toY(83),"UPDATE","↻",false,false,false)
- dashButton(hdc,d,toX(1126),toY(760),toX(274),toY(83),"PLAY","▶",true,false,false)
+ dashButton(hdc,d,toX(881),toY(760),toX(233),sizeY(83),"UPDATE","↻",false,false,false)
+ dashButton(hdc,d,toX(1126),toY(760),toX(274),sizeY(83),"PLAY","▶",true,false,false)
 }
 func dashboardWndProc(hwnd uintptr,msg uint32,wParam,lParam uintptr)uintptr{
  switch msg{
