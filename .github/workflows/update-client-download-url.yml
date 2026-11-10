@@ -1,0 +1,53 @@
+name: Update WoW client download URL in launcher
+
+on:
+  push:
+    paths:
+      - ".github/workflows/update-client-download-url.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch only the embedded client download URL
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib, json, zipfile
+
+          exe = Path("download/DawnForgeLauncher.exe")
+          old = b"https://dawnforge.eu/launcher/client/DawnForge-1.12.1.zip"
+          new = b"https://dawnforge.eu/download/DawnForge-1.12.1.zip?v=1111"
+          assert len(old) == len(new), "Must preserve compiled Go string length"
+          data = exe.read_bytes()
+          if data.count(old) != 1:
+              raise SystemExit(f"Expected one OLD client URL in published EXE, found {data.count(old)}; no files changed")
+          patched = data.replace(old, new)
+          assert len(patched) == len(data)
+          assert patched.count(new) == 1
+          exe.write_bytes(patched)
+
+          for filename in ("DawnForgeLauncherSetup.zip", "DawnForgeLauncherSetup_v1.0.12.zip"):
+              with zipfile.ZipFile(Path("download") / filename, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as z:
+                  z.write(exe, arcname="DawnForgeLauncher.exe")
+
+          sha = hashlib.sha256(patched).hexdigest()
+          Path("download/launcher-update.json").write_text(json.dumps({
+              "version": "1.0.12",
+              "url": "https://raw.githubusercontent.com/Mahoking1992/DawnForge-Launcher/main/download/DawnForgeLauncher.exe",
+              "sha256": sha
+          }, indent=2) + "\n")
+          print("Patched existing launcher: Download Game now uses Contabo URL; SHA256:", sha)
+          PY
+      - name: Publish only patched launcher and its update metadata
+        run: |
+          git config user.name "DawnForge Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add download/DawnForgeLauncher.exe download/DawnForgeLauncherSetup.zip download/DawnForgeLauncherSetup_v1.0.12.zip download/launcher-update.json
+          git commit -m "Point Download Game to new Contabo client ZIP"
+          git push
