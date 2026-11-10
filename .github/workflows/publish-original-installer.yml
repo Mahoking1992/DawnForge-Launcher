@@ -1,0 +1,55 @@
+name: Publish original DawnForge installer with Contabo game URL
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/publish-original-installer.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install RAR5 extractor
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y unar
+      - name: Extract original installer (not Go wrapper)
+        run: |
+          mkdir -p /tmp/dawnforge-original
+          unar -force-overwrite -output-directory /tmp/dawnforge-original download/DawnForgeLauncherSetup.rar
+          test -s /tmp/dawnforge-original/DawnForgeLauncherSetup.exe
+      - name: Patch ONLY the install URL and package the original installer
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile, ZIP_DEFLATED
+          import hashlib
+          p=Path("/tmp/dawnforge-original/DawnForgeLauncherSetup.exe")
+          data=p.read_bytes()
+          old=b"https://dawnforge.eu/launcher/client/DawnForge-1.12.1.zip"
+          new=b"https://dawnforge.eu/download/DawnForge-1.12.1.zip?v=1111"
+          assert len(old)==len(new)
+          assert data[:2]==b"MZ"
+          if data.count(old)!=1: raise SystemExit(f"Expected exactly one game install URL in original EXE, got {data.count(old)}")
+          patched=data.replace(old,new)
+          assert len(patched)==len(data)
+          assert sum(a!=b for a,b in zip(data,patched)) == sum(a!=b for a,b in zip(old,new))
+          destination=Path("download/DawnForgeLauncherSetup.exe")
+          destination.write_bytes(patched)
+          for archive in ("DawnForgeLauncherSetup.zip", "DawnForgeLauncherSetup_v1.0.12.zip"):
+              with ZipFile(Path("download")/archive,"w",compression=ZIP_DEFLATED,compresslevel=9) as z:
+                  z.write(destination,arcname="DawnForgeLauncherSetup.exe")
+          print("Original installer only: patched Contabo game ZIP URL. SHA256:",hashlib.sha256(patched).hexdigest())
+          PY
+      - name: Publish original installer
+        run: |
+          git config user.name "DawnForge Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add download/DawnForgeLauncherSetup.exe download/DawnForgeLauncherSetup.zip download/DawnForgeLauncherSetup_v1.0.12.zip
+          git commit -m "Publish original DawnForge installer with updated game URL"
+          git push
