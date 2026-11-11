@@ -186,7 +186,7 @@ function Play-Game {
     if(-not (Ensure-GameFolder)){return}
     $connector=[string]$cfg.ConnectorExe
     if([string]::IsNullOrWhiteSpace($connector)){
-        Err 'A compatible WoW Forever connection helper has not been configured. This client requires more than a realmlist change. Open Options and select your verified DawnForge Forever connection helper.'
+        Err 'DawnForge Forever connection is not ready yet. Please check for launcher updates.'
         Set-Status 'Connection helper not configured.' 0
         return
     }
@@ -196,31 +196,41 @@ function Play-Game {
     Set-Status 'Started compatible Forever connection helper.' 100
 }
 function Show-Options {
+    # Public options deliberately expose only the user's local game folder.
+    # Server routing, website and update endpoints are managed by the release configuration.
     $xaml=@'
-<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Title="DawnForge Forever - Options" Width="740" Height="405" Background="#0C1829" Foreground="#FFF0D8A7" WindowStartupLocation="CenterOwner" ResizeMode="NoResize">
- <Grid Margin="20"><Grid.RowDefinitions><RowDefinition Height="45"/><RowDefinition Height="45"/><RowDefinition Height="45"/><RowDefinition Height="45"/><RowDefinition Height="45"/><RowDefinition Height="45"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-  <TextBlock Grid.Row="0" Text="Game folder" VerticalAlignment="Center"/><TextBox Grid.Row="0" Name="Game" Margin="185,5,8,5" Background="#15263B" Foreground="White" />
-  <TextBlock Grid.Row="1" Text="Website URL" VerticalAlignment="Center"/><TextBox Grid.Row="1" Name="Website" Margin="185,5,8,5" Background="#15263B" Foreground="White"/>
-  <TextBlock Grid.Row="2" Text="Update manifest URL" VerticalAlignment="Center"/><TextBox Grid.Row="2" Name="Manifest" Margin="185,5,8,5" Background="#15263B" Foreground="White"/>
-  <TextBlock Grid.Row="3" Text="Connection helper EXE" VerticalAlignment="Center"/><TextBox Grid.Row="3" Name="Connector" Margin="185,5,8,5" Background="#15263B" Foreground="White"/>
-  <TextBlock Grid.Row="4" Text="Gateway hostname" VerticalAlignment="Center"/><TextBox Grid.Row="4" Name="Host" Margin="185,5,8,5" Background="#15263B" Foreground="White"/>
-  <TextBlock Grid.Row="5" Text="Gateway port" VerticalAlignment="Center"/><TextBox Grid.Row="5" Name="Port" Margin="185,5,8,5" Background="#15263B" Foreground="White"/>
-  <Button Grid.Row="6" Name="Save" Content="SAVE SETTINGS" Height="42" Width="180" HorizontalAlignment="Right" VerticalAlignment="Bottom" Background="#173B65" Foreground="White"/>
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Title="DawnForge Forever - Options" Width="720" Height="222" Background="#0C1829" Foreground="#FFF0D8A7" WindowStartupLocation="CenterOwner" ResizeMode="NoResize">
+ <Grid Margin="22">
+  <Grid.RowDefinitions><RowDefinition Height="58"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+  <TextBlock Grid.Row="0" Text="Game folder" VerticalAlignment="Center" FontSize="16"/>
+  <TextBox Grid.Row="0" Name="Game" Margin="135,9,116,9" VerticalContentAlignment="Center" FontSize="14" Background="#15263B" Foreground="White" BorderBrush="#A88A4E"/>
+  <Button Grid.Row="0" Name="Browse" Content="BROWSE" Width="104" Height="39" HorizontalAlignment="Right" VerticalAlignment="Center" Background="#173B65" BorderBrush="#A88A4E" Foreground="White" Cursor="Hand"/>
+  <TextBlock Grid.Row="1" Text="Choose the folder containing your existing WoW Forever game." FontSize="13" Foreground="#B8C6D5" VerticalAlignment="Top" Margin="0,8,0,0"/>
+  <Button Grid.Row="1" Name="Save" Content="SAVE SETTINGS" Height="40" Width="180" HorizontalAlignment="Right" VerticalAlignment="Bottom" Background="#173B65" BorderBrush="#A88A4E" Foreground="White" Cursor="Hand"/>
  </Grid>
 </Window>
 '@
     $o=[System.Windows.Markup.XamlReader]::Parse($xaml);$o.Owner=$window
-    foreach($tuple in @(@('Game','GameDir'),@('Website','SiteUrl'),@('Manifest','ManifestUrl'),@('Connector','ConnectorExe'),@('Host','ServerHost'),@('Port','ServerPort'))){$o.FindName($tuple[0]).Text=[string]$cfg[$tuple[1]]}
-    $save=$o.FindName('Save')
-    $save.Add_Click({
-        $web=$o.FindName('Website').Text;$manifest=$o.FindName('Manifest').Text
-        if(-not (Valid-Https $web) -or -not (Valid-Https $manifest)){Err 'Website and manifest URLs must be valid HTTPS addresses.';return}
-        $portNo=0
-        if(-not [int]::TryParse($o.FindName('Port').Text,[ref]$portNo) -or $portNo -lt 1 -or $portNo -gt 65535){Err 'Invalid port (1 to 65535).';return}
-        $cfg.GameDir=$o.FindName('Game').Text.Trim();$cfg.SiteUrl=$web;$cfg.ManifestUrl=$manifest
-        $cfg.ConnectorExe=$o.FindName('Connector').Text.Trim();$cfg.ServerHost=$o.FindName('Host').Text.Trim();$cfg.ServerPort=$portNo
+    $game=$o.FindName('Game')
+    $game.Text=[string]$cfg.GameDir
+    $o.FindName('Browse').Add_Click({
+        $picker=New-Object Windows.Forms.FolderBrowserDialog
+        $picker.Description='Select your existing WoW Forever game folder'
+        if($game.Text -and (Test-Path -LiteralPath $game.Text -PathType Container)){$picker.SelectedPath=$game.Text}
+        try {
+            if($picker.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK){$game.Text=$picker.SelectedPath}
+        } finally {$picker.Dispose()}
+    })
+    $o.FindName('Save').Add_Click({
+        $chosen=$game.Text.Trim()
+        if($chosen -and -not (Test-Path -LiteralPath $chosen -PathType Container)){
+            Err 'The selected game folder does not exist.'
+            return
+        }
+        $cfg.GameDir=$chosen
         Save-Settings
-        $o.DialogResult=$true;$o.Close()
+        $o.DialogResult=$true
+        $o.Close()
     })
     $o.ShowDialog() | Out-Null
     Check-Server
@@ -245,7 +255,7 @@ $xaml=@'
  <Button x:Name="Close" Canvas.Left="1482" Canvas.Top="0" Width="54" Height="50" Background="Transparent" BorderThickness="0" Cursor="Hand"/>
  <Button x:Name="Minimize" Canvas.Left="1355" Canvas.Top="0" Width="55" Height="50" Background="Transparent" BorderThickness="0" Cursor="Hand"/>
  <Button x:Name="Maximize" Canvas.Left="1422" Canvas.Top="0" Width="55" Height="50" Background="Transparent" BorderThickness="0" Cursor="Hand"/>
- <Border Canvas.Left="375" Canvas.Top="925" Width="1158" Height="70" Background="#F0081524" BorderBrush="#806A4B" BorderThickness="1"><Grid><TextBlock Text="Secure downloads  •  SHA-256 verification  •  Private client settings  •  Launcher v0.1.0" FontSize="19" Foreground="#FFE8CA93" VerticalAlignment="Center" HorizontalAlignment="Center"/></Grid></Border>
+ 
  </Canvas></Viewbox>
  </Grid>
 </Window>
