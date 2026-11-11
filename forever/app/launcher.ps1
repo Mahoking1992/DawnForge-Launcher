@@ -7,6 +7,7 @@ Add-Type -AssemblyName PresentationFramework,PresentationCore,WindowsBase,System
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $settingsFile=Join-Path $AppDirectory 'settings.json'
 $defaultManifest='https://raw.githubusercontent.com/Mahoking1992/DawnForge-Launcher/main/forever/update-manifest.json'
+$defaultClientManifest='https://dawnforge.eu/forever-client/manifest.json'
 $defaults=@{
     SiteUrl='https://dawnforge.eu/'
     ManifestUrl=$defaultManifest
@@ -49,9 +50,10 @@ function Set-Status([string]$str,[int]$pct=-1) {
     if($pct -ge 0){$Progress.Value=[Math]::Min(100,[Math]::Max(0,$pct))}
     [System.Windows.Forms.Application]::DoEvents()
 }
-function Get-Manifest {
-    if(-not (Valid-Https $cfg.ManifestUrl)){throw 'Update manifest URL must be HTTPS.'}
-    $req=[Net.HttpWebRequest][Net.WebRequest]::Create([string]$cfg.ManifestUrl)
+function Get-Manifest([string]$url='') {
+    if([string]::IsNullOrWhiteSpace($url)){$url=[string]$cfg.ManifestUrl}
+    if(-not (Valid-Https $url)){throw 'Update manifest URL must be HTTPS.'}
+    $req=[Net.HttpWebRequest][Net.WebRequest]::Create($url)
     $req.Timeout=12000; $req.ReadWriteTimeout=12000
     $req.UserAgent='DawnForgeForeverLauncher/0.2'
     $response=$req.GetResponse()
@@ -178,7 +180,7 @@ function Ensure-GameFolder {
 }
 function Sync-Files([bool]$repair=$false) {
     if(-not (Ensure-GameFolder)){return}
-    $manifest=Get-Manifest
+    $manifest=Get-Manifest $defaultClientManifest
     $files=@($manifest.files | Where-Object { $null -ne $_ })
     if($files.Count -gt 30000){throw 'Manifest file count exceeds safety limit.'}
     if($files.Count -eq 0) {
