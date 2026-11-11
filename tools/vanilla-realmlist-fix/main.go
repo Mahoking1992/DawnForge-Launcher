@@ -4,6 +4,7 @@ import (
  "errors"
  "fmt"
  "os"
+ "os/exec"
  "path/filepath"
  "strings"
  "syscall"
@@ -21,17 +22,22 @@ func fix(folder string) error {
  target:=filepath.Join(folder,"realmlist.wtf")
  old,err:=os.ReadFile(target);if err!=nil{return fmt.Errorf("realmlist.wtf not found next to Wow.exe: %w",err)}
  if strings.TrimSpace(string(old))=="set realmlist play.dawnforge.eu" {return nil}
- if err:=os.WriteFile(target+".dawnforge-backup",old,0644);err!=nil{return err}
+ if _,err:=os.Stat(target+".dawnforge-backup");os.IsNotExist(err) {if err:=os.WriteFile(target+".dawnforge-backup",old,0644);err!=nil{return err}}
  tmp:=target+".dawnforge-tmp"
  if err:=os.WriteFile(tmp,[]byte("set realmlist play.dawnforge.eu\r\n"),0644);err!=nil{return err}
  if err:=os.Rename(tmp,target);err!=nil {os.Remove(tmp);return err}
  return nil
 }
+func chooseFolder() (string,error) {
+ cmd:=exec.Command("powershell.exe","-NoProfile","-STA","-Command",`Add-Type -AssemblyName System.Windows.Forms; $d=New-Object System.Windows.Forms.FolderBrowserDialog; $d.Description="Choose your installed DawnForge Vanilla folder containing Wow.exe"; if($d.ShowDialog() -eq "OK") { [Console]::Write($d.SelectedPath) }`)
+ out,err:=cmd.Output();return strings.TrimSpace(string(out)),err
+}
 func main(){
  args:=os.Args[1:]
  silent:=false
  if len(args)==2 && args[0]=="--silent" {silent=true;args=args[1:]}
- if len(args)!=1 { fail(errors.New("Provide the installed Vanilla client folder as the only argument (the folder containing Wow.exe and realmlist.wtf). No changes were made."));return}
+ if len(args)==0 {p,err:=chooseFolder();if err!=nil{fail(err);return};if p==""{return};args=[]string{p}}
+ if len(args)!=1 { fail(errors.New("Provide the Vanilla client folder containing Wow.exe and realmlist.wtf."));return}
  folder:=args[0]
  if err:=fix(folder);err!=nil{fail(err);return}
  if !silent {notify("Vanilla realmlist is now play.dawnforge.eu. Original file was backed up.")}
