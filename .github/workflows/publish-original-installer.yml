@@ -23,6 +23,20 @@ jobs:
           mkdir -p /tmp/dawnforge-original
           unar -force-overwrite -output-directory /tmp/dawnforge-original download/DawnForgeLauncherSetup.rar
           test -s /tmp/dawnforge-original/DawnForgeLauncherSetup.exe
+      - name: Diagnose embedded SHA-256 values safely (read-only)
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re, hashlib
+          d=Path("/tmp/dawnforge-original/DawnForgeLauncherSetup.exe").read_bytes()
+          print("ORIGINAL EXE SHA256",hashlib.sha256(d).hexdigest())
+          for m in re.finditer(rb'(?i)(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])',d):
+              k=m.start()
+              print("SHA",k,m.group().decode(),"nearby:",repr(d[max(k-140,0):k+180]))
+          for phrase in (b'DawnForge-1.12.1.zip',b'SHA-256 mismatch',b'expectedSHA',b'sha256'):
+              print("PHRASE",phrase, [m.start() for m in list(re.finditer(re.escape(phrase),d))[:12]])
+          raise SystemExit("Diagnosis only: no executable published in this run")
+          PY
       - name: Patch ONLY the install URL and package the original installer
         run: |
           python3 - <<'PY'
