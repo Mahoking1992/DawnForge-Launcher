@@ -11,8 +11,7 @@ $defaults=@{
     SiteUrl='https://dawnforge.eu/'
     ManifestUrl=$defaultManifest
     GameDir=''
-    ConnectorExe=''
-    ServerHost=''
+    ServerHost='play.dawnforge.eu'
     ServerPort=1119
 }
 function Load-Settings {
@@ -27,6 +26,8 @@ function Load-Settings {
     return $v
 }
 $cfg=Load-Settings
+$cfg.ServerHost=$defaults.ServerHost
+$cfg.ServerPort=$defaults.ServerPort
 function Save-Settings {
     $json=$cfg | ConvertTo-Json -Depth 5
     $temp="$settingsFile.tmp"
@@ -184,16 +185,20 @@ for($i=0;$i -lt 40;$i++) {
 }
 function Play-Game {
     if(-not (Ensure-GameFolder)){return}
-    $connector=[string]$cfg.ConnectorExe
-    if([string]::IsNullOrWhiteSpace($connector)){
-        Err 'DawnForge Forever connection is not ready yet. Please check for launcher updates.'
-        Set-Status 'Connection helper not configured.' 0
-        return
+    $connector=Join-Path $AppDirectory 'forever-connector.exe'
+    if(-not (Test-Path -LiteralPath $connector -PathType Leaf)){throw 'Bundled Forever connector is missing. Reinstall the launcher.'}
+    $clientRoot=[IO.Path]::GetFullPath([string]$cfg.GameDir).TrimEnd('\')
+    if(Test-Path -LiteralPath (Join-Path $clientRoot 'Wow.exe')){
+        if((Split-Path -Leaf $clientRoot) -ne '_forever_'){throw 'Select the installation folder containing _forever_\Wow.exe.'}
+        $clientRoot=Split-Path -Parent $clientRoot
     }
-    if(-not [IO.Path]::IsPathRooted($connector)){$connector=Safe-Target ([string]$cfg.GameDir) $connector}
-    if(-not (Test-Path -LiteralPath $connector -PathType Leaf)) {Err "Connection helper not found: $connector";return}
-    Start-Process -FilePath $connector -WorkingDirectory (Split-Path -Parent $connector)
-    Set-Status 'Started compatible Forever connection helper.' 100
+    if(-not (Test-Path -LiteralPath (Join-Path $clientRoot '_forever_\Wow.exe')) -and -not (Test-Path -LiteralPath (Join-Path $clientRoot '_classic_beta_\WowB.exe'))){
+        throw 'Forever client not found. Select the installation folder containing _forever_\Wow.exe in Options.'
+    }
+    if($script:connectorProcess -and -not $script:connectorProcess.HasExited){Msg 'WoW Forever is already running or being prepared.';return}
+    $script:connectorProcess=Start-Process -FilePath $connector -ArgumentList @('--client',('"'+$clientRoot+'"')) -WorkingDirectory $AppDirectory -PassThru
+    Set-Status 'Preparing WoW Forever for DawnForge Forever. Enter your account in the game.' 0
+
 }
 function Show-Options {
     # Public options deliberately expose only the user's local game folder.
@@ -278,5 +283,16 @@ $window.FindName('Options').Add_Click({try{Show-Options}catch{Err $_.Exception.M
 $window.FindName('Downloads').Add_Click({try{Sync-Files}catch{Set-Status 'Download or repair failed.' 0;Err $_.Exception.Message}})
 $window.FindName('Updates').Add_Click({try{if(-not (Update-Launcher)){Sync-Files}}catch{Set-Status 'Update check failed.' 0;Err $_.Exception.Message}})
 $window.FindName('Play').Add_Click({try{Play-Game}catch{Err $_.Exception.Message}})
+$connectorTimer=New-Object Windows.Threading.DispatcherTimer
+$connectorTimer.Interval=[TimeSpan]::FromSeconds(2)
+$connectorTimer.Add_Tick({
+    if($script:connectorProcess -and $script:connectorProcess.HasExited){
+        if($script:connectorProcess.ExitCode -ne 0){Set-Status 'Forever connection failed. See %LOCALAPPDATA%\DawnForgeForever\launcher.log.' 0}
+        else{Set-Status 'WoW Forever session ended.' 0}
+        $script:connectorProcess.Dispose();$script:connectorProcess=$null
+    }
+})
+$connectorTimer.Start()
+$window.Add_Closed({$connectorTimer.Stop()})
 $window.Add_ContentRendered({Check-Server})
 $window.ShowDialog() | Out-Null
