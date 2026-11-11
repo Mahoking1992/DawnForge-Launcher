@@ -11,7 +11,8 @@ $defaults=@{
     SiteUrl='https://dawnforge.eu/'
     ManifestUrl=$defaultManifest
     GameDir=''
-    ServerHost='play.dawnforge.eu'
+    ConnectorExe=''
+    ServerHost=''
     ServerPort=1119
 }
 function Load-Settings {
@@ -26,8 +27,6 @@ function Load-Settings {
     return $v
 }
 $cfg=Load-Settings
-$cfg.ServerHost=$defaults.ServerHost
-$cfg.ServerPort=$defaults.ServerPort
 function Save-Settings {
     $json=$cfg | ConvertTo-Json -Depth 5
     $temp="$settingsFile.tmp"
@@ -111,200 +110,9 @@ function Fetch-VerifiedFile([string]$url,[string]$sha,[string]$target,[Int64]$ma
     Move-Item -LiteralPath $part -Destination $target -Force
     return $true
 }
-
 function Fetch-ClientArchive([string]$url,[string]$sha,[string]$target,[Int64]$maxBytes=85899345920) {
     if(-not (Valid-Https $url)){throw 'Client archive URL must use HTTPS.'}
-    if($sha -notmatch '^[A-Fa-f0-9]{64}
-    if($cfg.GameDir -and (Test-Path -LiteralPath $cfg.GameDir -PathType Container)){return $true}
-    $dialog=New-Object Windows.Forms.FolderBrowserDialog
-    $dialog.Description='Choose your own WoW Forever client folder. Official client files are not provided by DawnForge.'
-    if($dialog.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK){return $false}
-    $cfg.GameDir=$dialog.SelectedPath
-    Save-Settings
-    return $true
-}
-function Sync-Files([bool]$repair=$false) {
-    $manifest=Get-Manifest
-    if(-not $cfg.GameDir -and $manifest.clientArchive){Install-PublishedClient $manifest | Out-Null;return}
-    if(-not (Ensure-GameFolder)){return}
-    $hasClient=(Test-Path -LiteralPath (Join-Path ([string]$cfg.GameDir) '_forever_\Wow.exe') -PathType Leaf)
-    if(-not $hasClient -and $manifest.clientArchive) {
-        Install-PublishedClient $manifest | Out-Null
-        return
-    }
-    $files=@($manifest.files | Where-Object { $null -ne $_ })
-    if($files.Count -gt 2000){throw 'Manifest file count exceeds safety limit.'}
-    if($files.Count -eq 0) {
-        Set-Status 'No downloadable files have been published yet.' 0
-        Msg 'No client archive or game patches are currently published. Select your existing Forever client in Options.'
-        return
-    }
-    $count=0
-    foreach($f in $files){
-        $count++
-        if(-not $f.path -or -not $f.url -or -not $f.sha256){throw 'Incomplete file entry in manifest.'}
-        $dest=Safe-Target ([string]$cfg.GameDir) ([string]$f.path)
-        Set-Status "Checking $count / $($files.Count): $($f.path)" 0
-        Fetch-VerifiedFile ([string]$f.url) ([string]$f.sha256) $dest | Out-Null
-    }
-    Set-Status 'Client files verified and up to date.' 100
-}
-function Check-Server {
-    if([string]::IsNullOrWhiteSpace($cfg.ServerHost)){
-        $ServerTitle.Text='Gateway not configured';$ServerTitle.Foreground=([System.Windows.Media.BrushConverter]::new().ConvertFromString('#FFDBB774'));return
-    }
-    $client=New-Object Net.Sockets.TcpClient
-    try {
-        $async=$client.BeginConnect([string]$cfg.ServerHost,[int]$cfg.ServerPort,$null,$null)
-        if($async.AsyncWaitHandle.WaitOne(2000,$false)){
-            $client.EndConnect($async)
-            $ServerTitle.Text='Gateway reachable';$ServerTitle.Foreground=([System.Windows.Media.BrushConverter]::new().ConvertFromString('#FF76E789'))
-        } else {
-            $ServerTitle.Text='Gateway unavailable';$ServerTitle.Foreground=([System.Windows.Media.BrushConverter]::new().ConvertFromString('#FFFFB570'))
-        }
-    } catch { $ServerTitle.Text='Gateway unavailable';$ServerTitle.Foreground=([System.Windows.Media.BrushConverter]::new().ConvertFromString('#FFFFB570')) }
-    finally {$client.Close()}
-}
-function Update-Launcher {
-    $manifest=Get-Manifest
-    $remote=$manifest.launcher
-    if(-not $remote -or -not $remote.version -or -not $remote.url -or -not $remote.sha256){return $false}
-    $current=[Version]'0.2.3';$latest=[Version]([string]$remote.version)
-    if($latest -le $current){return $false}
-    $res=[System.Windows.MessageBox]::Show("A newer launcher ($latest) is available. Install verified update now?",'Launcher update',[System.Windows.MessageBoxButton]::YesNo,[System.Windows.MessageBoxImage]::Question)
-    if($res -ne 'Yes'){return $true}
-    $next="$LauncherExe.dfnew"
-    Fetch-VerifiedFile ([string]$remote.url) ([string]$remote.sha256) $next 104857600 | Out-Null
-    $updater=Join-Path $AppDirectory 'apply-update.ps1'
-    $script=@'
-param([string]$OldExe,[string]$NewExe)
-for($i=0;$i -lt 40;$i++) {
-    try {
-        Copy-Item -LiteralPath $NewExe -Destination $OldExe -Force -ErrorAction Stop
-        Remove-Item -LiteralPath $NewExe -Force -ErrorAction SilentlyContinue
-        Start-Process -FilePath $OldExe
-        exit
-    } catch {Start-Sleep -Milliseconds 500}
-}
-'@
-    [IO.File]::WriteAllText($updater,$script)
-    Start-Process powershell.exe -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File',('"'+$updater+'"'),('"'+$LauncherExe+'"'),('"'+$next+'"')) -WindowStyle Hidden
-    $window.Close()
-    return $true
-}
-function Play-Game {
-    if(-not (Ensure-GameFolder)){return}
-    $connector=Join-Path $AppDirectory 'forever-connector.exe'
-    if(-not (Test-Path -LiteralPath $connector -PathType Leaf)){throw 'Bundled Forever connector is missing. Reinstall the launcher.'}
-    $clientRoot=[IO.Path]::GetFullPath([string]$cfg.GameDir).TrimEnd('\')
-    if(Test-Path -LiteralPath (Join-Path $clientRoot 'Wow.exe')){
-        if((Split-Path -Leaf $clientRoot) -ne '_forever_'){throw 'Select the installation folder containing _forever_\Wow.exe.'}
-        $clientRoot=Split-Path -Parent $clientRoot
-    }
-    if(-not (Test-Path -LiteralPath (Join-Path $clientRoot '_forever_\Wow.exe')) -and -not (Test-Path -LiteralPath (Join-Path $clientRoot '_classic_beta_\WowB.exe'))){
-        throw 'Forever client not found. Select the installation folder containing _forever_\Wow.exe in Options.'
-    }
-    if($script:connectorProcess -and -not $script:connectorProcess.HasExited){Msg 'WoW Forever is already running or being prepared.';return}
-    $script:connectorProcess=Start-Process -FilePath $connector -ArgumentList @('--client',('"'+$clientRoot+'"')) -WorkingDirectory $AppDirectory -PassThru
-    Set-Status 'Preparing WoW Forever for DawnForge Forever. Enter your account in the game.' 0
-
-}
-function Show-Options {
-    # Public options deliberately expose only the user's local game folder.
-    # Server routing, website and update endpoints are managed by the release configuration.
-    $xaml=@'
-<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Title="DawnForge Forever - Options" Width="720" Height="222" Background="#0C1829" Foreground="#FFF0D8A7" WindowStartupLocation="CenterOwner" ResizeMode="NoResize">
- <Grid Margin="22">
-  <Grid.RowDefinitions><RowDefinition Height="58"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-  <TextBlock Grid.Row="0" Text="Game folder" VerticalAlignment="Center" FontSize="16"/>
-  <TextBox Grid.Row="0" Name="Game" Margin="135,9,116,9" VerticalContentAlignment="Center" FontSize="14" Background="#15263B" Foreground="White" BorderBrush="#A88A4E"/>
-  <Button Grid.Row="0" Name="Browse" Content="BROWSE" Width="104" Height="39" HorizontalAlignment="Right" VerticalAlignment="Center" Background="#173B65" BorderBrush="#A88A4E" Foreground="White" Cursor="Hand"/>
-  <TextBlock Grid.Row="1" Text="Choose the folder containing your existing WoW Forever game." FontSize="13" Foreground="#B8C6D5" VerticalAlignment="Top" Margin="0,8,0,0"/>
-  <Button Grid.Row="1" Name="Save" Content="SAVE SETTINGS" Height="40" Width="180" HorizontalAlignment="Right" VerticalAlignment="Bottom" Background="#173B65" BorderBrush="#A88A4E" Foreground="White" Cursor="Hand"/>
- </Grid>
-</Window>
-'@
-    $o=[System.Windows.Markup.XamlReader]::Parse($xaml);$o.Owner=$window
-    $game=$o.FindName('Game')
-    $game.Text=[string]$cfg.GameDir
-    $o.FindName('Browse').Add_Click({
-        $picker=New-Object Windows.Forms.FolderBrowserDialog
-        $picker.Description='Select your existing WoW Forever game folder'
-        if($game.Text -and (Test-Path -LiteralPath $game.Text -PathType Container)){$picker.SelectedPath=$game.Text}
-        try {
-            if($picker.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK){$game.Text=$picker.SelectedPath}
-        } finally {$picker.Dispose()}
-    })
-    $o.FindName('Save').Add_Click({
-        $chosen=$game.Text.Trim()
-        if($chosen -and -not (Test-Path -LiteralPath $chosen -PathType Container)){
-            Err 'The selected game folder does not exist.'
-            return
-        }
-        $cfg.GameDir=$chosen
-        Save-Settings
-        $o.DialogResult=$true
-        $o.Close()
-    })
-    $o.ShowDialog() | Out-Null
-    Check-Server
-}
-$xaml=@'
-<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="DawnForge Forever Launcher" Width="1229" Height="819" MinWidth="900" MinHeight="590" Background="#060C16" WindowStyle="None" ResizeMode="CanResizeWithGrip" WindowStartupLocation="CenterScreen" ShowInTaskbar="True">
- <Grid>
- <Viewbox Stretch="Uniform" StretchDirection="Both"><Canvas Width="1536" Height="1024" Background="#081020">
- <Image x:Name="Art" Width="1536" Height="1024" Canvas.Left="0" Canvas.Top="0" Stretch="Fill"/>
- <Border Canvas.Left="1046" Canvas.Top="501" Width="465" Height="264" BorderBrush="#A88A4E" BorderThickness="2" CornerRadius="9" Background="#FF081524">
-  <StackPanel Margin="28,16"><TextBlock Text="DAWNFORGE FOREVER" FontWeight="Bold" FontFamily="Georgia" FontSize="25" Foreground="#FFE4B769"/><TextBlock x:Name="ServerTitle" Text="Checking gateway..." Foreground="#FFDBB774" FontSize="25" Margin="0,14,0,12"/><TextBlock Text="Website: dawnforge.eu" Foreground="#FFCFD7E1" FontSize="19"/><TextBlock Text="One permanent realm" Foreground="#FFAFB5BF" FontSize="18" Margin="0,12,0,0"/></StackPanel>
- </Border>
- <Border Canvas.Left="35" Canvas.Top="768" Width="998" Height="135" Background="#FF081524" CornerRadius="8" BorderBrush="#806A4B" BorderThickness="2">
-  <Grid Margin="24,20"><Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="26"/></Grid.RowDefinitions><TextBlock x:Name="Status" Text="Select your existing WoW Forever game folder in Options." Foreground="#FFEBD3AA" FontSize="22" VerticalAlignment="Center" TextWrapping="Wrap"/><ProgressBar x:Name="Progress" Grid.Row="1" Maximum="100" Height="18" Background="#FF0A1320" Foreground="#FF40D36D" Value="0" /></Grid>
- </Border>
- <Button x:Name="Home" Canvas.Left="53" Canvas.Top="421" Width="298" Height="75" Background="Transparent" BorderThickness="0" Cursor="Hand"/>
- <Button x:Name="Website" Canvas.Left="358" Canvas.Top="421" Width="280" Height="75" Background="Transparent" BorderThickness="0" Cursor="Hand"/>
- <Button x:Name="Downloads" Canvas.Left="649" Canvas.Top="421" Width="276" Height="75" Background="Transparent" BorderThickness="0" Cursor="Hand"/>
- <Button x:Name="Updates" Canvas.Left="929" Canvas.Top="421" Width="279" Height="75" Background="Transparent" BorderThickness="0" Cursor="Hand"/>
- <Button x:Name="Options" Canvas.Left="1214" Canvas.Top="421" Width="280" Height="75" Background="Transparent" BorderThickness="0" Cursor="Hand"/>
- <Button x:Name="Play" Canvas.Left="1065" Canvas.Top="773" Width="434" Height="125" Background="Transparent" BorderThickness="0" Cursor="Hand"/>
- <Button x:Name="Close" Canvas.Left="1482" Canvas.Top="0" Width="54" Height="50" Background="Transparent" BorderThickness="0" Cursor="Hand"/>
- <Button x:Name="Minimize" Canvas.Left="1355" Canvas.Top="0" Width="55" Height="50" Background="Transparent" BorderThickness="0" Cursor="Hand"/>
- <Button x:Name="Maximize" Canvas.Left="1422" Canvas.Top="0" Width="55" Height="50" Background="Transparent" BorderThickness="0" Cursor="Hand"/>
- 
- </Canvas></Viewbox>
- </Grid>
-</Window>
-'@
-$window=[System.Windows.Markup.XamlReader]::Parse($xaml)
-$Art=$window.FindName('Art');$StatusText=$window.FindName('Status');$Progress=$window.FindName('Progress');$ServerTitle=$window.FindName('ServerTitle')
-$img=Join-Path $AppDirectory 'artwork.jpg'
-if(Test-Path -LiteralPath $img){
-    $bitmap=New-Object System.Windows.Media.Imaging.BitmapImage
-    $bitmap.BeginInit();$bitmap.UriSource=[Uri]::new($img);$bitmap.CacheOption=[System.Windows.Media.Imaging.BitmapCacheOption]::OnLoad;$bitmap.EndInit();$bitmap.Freeze()
-    $Art.Source=$bitmap
-}
-$window.FindName('Close').Add_Click({$window.Close()})
-$window.FindName('Minimize').Add_Click({$window.WindowState=[System.Windows.WindowState]::Minimized})
-$window.FindName('Maximize').Add_Click({if($window.WindowState -eq 'Maximized'){$window.WindowState='Normal'}else{$window.WindowState='Maximized'}})
-$window.Add_MouseLeftButtonDown({if([System.Windows.Input.Mouse]::GetPosition($window).Y -lt 48 -and $_.ChangedButton -eq [System.Windows.Input.MouseButton]::Left){$window.DragMove()}})
-$window.FindName('Home').Add_Click({Check-Server;Set-Status 'Ready. Choose your existing client in Options, then check updates.' 0})
-$window.FindName('Website').Add_Click({if(Valid-Https $cfg.SiteUrl){Start-Process ([string]$cfg.SiteUrl)}else{Err 'Website URL is invalid.'}})
-$window.FindName('Options').Add_Click({try{Show-Options}catch{Err $_.Exception.Message}})
-$window.FindName('Downloads').Add_Click({try{Sync-Files}catch{Set-Status 'Download or repair failed.' 0;Err $_.Exception.Message}})
-$window.FindName('Updates').Add_Click({try{if(-not (Update-Launcher)){Sync-Files}}catch{Set-Status 'Update check failed.' 0;Err $_.Exception.Message}})
-$window.FindName('Play').Add_Click({try{Play-Game}catch{Err $_.Exception.Message}})
-$connectorTimer=New-Object Windows.Threading.DispatcherTimer
-$connectorTimer.Interval=[TimeSpan]::FromSeconds(2)
-$connectorTimer.Add_Tick({
-    if($script:connectorProcess -and $script:connectorProcess.HasExited){
-        if($script:connectorProcess.ExitCode -ne 0){Set-Status 'Forever connection failed. See %LOCALAPPDATA%\DawnForgeForever\launcher.log.' 0}
-        else{Set-Status 'WoW Forever session ended.' 0}
-        $script:connectorProcess.Dispose();$script:connectorProcess=$null
-    }
-})
-$connectorTimer.Start()
-$window.Add_Closed({$connectorTimer.Stop()})
-$window.Add_ContentRendered({Check-Server})
-$window.ShowDialog() | Out-Null){throw 'Client archive SHA-256 is invalid.'}
+    if($sha -notmatch '^[A-Fa-f0-9]{64}$'){throw 'Client archive SHA-256 is invalid.'}
     [IO.Directory]::CreateDirectory((Split-Path -Parent $target)) | Out-Null
     $part="$target.dfpart"
     if(Test-Path -LiteralPath $target) {
@@ -434,6 +242,7 @@ function Install-PublishedClient($manifest) {
     return $true
 }
 
+
 function Ensure-GameFolder {
     if($cfg.GameDir -and (Test-Path -LiteralPath $cfg.GameDir -PathType Container)){return $true}
     $dialog=New-Object Windows.Forms.FolderBrowserDialog
@@ -444,13 +253,19 @@ function Ensure-GameFolder {
     return $true
 }
 function Sync-Files([bool]$repair=$false) {
-    if(-not (Ensure-GameFolder)){return}
     $manifest=Get-Manifest
+    if(-not $cfg.GameDir -and $manifest.clientArchive){Install-PublishedClient $manifest | Out-Null;return}
+    if(-not (Ensure-GameFolder)){return}
+    $hasClient=(Test-Path -LiteralPath (Join-Path ([string]$cfg.GameDir) '_forever_\Wow.exe') -PathType Leaf)
+    if(-not $hasClient -and $manifest.clientArchive) {
+        Install-PublishedClient $manifest | Out-Null
+        return
+    }
     $files=@($manifest.files | Where-Object { $null -ne $_ })
     if($files.Count -gt 2000){throw 'Manifest file count exceeds safety limit.'}
     if($files.Count -eq 0) {
         Set-Status 'No downloadable files have been published yet.' 0
-        Msg 'No DawnForge patches are currently published. Select your existing legitimate Forever client in Options. Full game files are not distributed by this launcher.'
+        Msg 'No client archive or game patches are currently published. Select your existing Forever client in Options.'
         return
     }
     $count=0
@@ -483,7 +298,7 @@ function Update-Launcher {
     $manifest=Get-Manifest
     $remote=$manifest.launcher
     if(-not $remote -or -not $remote.version -or -not $remote.url -or -not $remote.sha256){return $false}
-    $current=[Version]'0.2.2';$latest=[Version]([string]$remote.version)
+    $current=[Version]'0.2.1';$latest=[Version]([string]$remote.version)
     if($latest -le $current){return $false}
     $res=[System.Windows.MessageBox]::Show("A newer launcher ($latest) is available. Install verified update now?",'Launcher update',[System.Windows.MessageBoxButton]::YesNo,[System.Windows.MessageBoxImage]::Question)
     if($res -ne 'Yes'){return $true}
@@ -508,20 +323,16 @@ for($i=0;$i -lt 40;$i++) {
 }
 function Play-Game {
     if(-not (Ensure-GameFolder)){return}
-    $connector=Join-Path $AppDirectory 'forever-connector.exe'
-    if(-not (Test-Path -LiteralPath $connector -PathType Leaf)){throw 'Bundled Forever connector is missing. Reinstall the launcher.'}
-    $clientRoot=[IO.Path]::GetFullPath([string]$cfg.GameDir).TrimEnd('\')
-    if(Test-Path -LiteralPath (Join-Path $clientRoot 'Wow.exe')){
-        if((Split-Path -Leaf $clientRoot) -ne '_forever_'){throw 'Select the installation folder containing _forever_\Wow.exe.'}
-        $clientRoot=Split-Path -Parent $clientRoot
+    $connector=[string]$cfg.ConnectorExe
+    if([string]::IsNullOrWhiteSpace($connector)){
+        Err 'DawnForge Forever connection is not ready yet. Please check for launcher updates.'
+        Set-Status 'Connection helper not configured.' 0
+        return
     }
-    if(-not (Test-Path -LiteralPath (Join-Path $clientRoot '_forever_\Wow.exe')) -and -not (Test-Path -LiteralPath (Join-Path $clientRoot '_classic_beta_\WowB.exe'))){
-        throw 'Forever client not found. Select the installation folder containing _forever_\Wow.exe in Options.'
-    }
-    if($script:connectorProcess -and -not $script:connectorProcess.HasExited){Msg 'WoW Forever is already running or being prepared.';return}
-    $script:connectorProcess=Start-Process -FilePath $connector -ArgumentList @('--client',('"'+$clientRoot+'"')) -WorkingDirectory $AppDirectory -PassThru
-    Set-Status 'Preparing WoW Forever for DawnForge Forever. Enter your account in the game.' 0
-
+    if(-not [IO.Path]::IsPathRooted($connector)){$connector=Safe-Target ([string]$cfg.GameDir) $connector}
+    if(-not (Test-Path -LiteralPath $connector -PathType Leaf)) {Err "Connection helper not found: $connector";return}
+    Start-Process -FilePath $connector -WorkingDirectory (Split-Path -Parent $connector)
+    Set-Status 'Started compatible Forever connection helper.' 100
 }
 function Show-Options {
     # Public options deliberately expose only the user's local game folder.
@@ -606,16 +417,5 @@ $window.FindName('Options').Add_Click({try{Show-Options}catch{Err $_.Exception.M
 $window.FindName('Downloads').Add_Click({try{Sync-Files}catch{Set-Status 'Download or repair failed.' 0;Err $_.Exception.Message}})
 $window.FindName('Updates').Add_Click({try{if(-not (Update-Launcher)){Sync-Files}}catch{Set-Status 'Update check failed.' 0;Err $_.Exception.Message}})
 $window.FindName('Play').Add_Click({try{Play-Game}catch{Err $_.Exception.Message}})
-$connectorTimer=New-Object Windows.Threading.DispatcherTimer
-$connectorTimer.Interval=[TimeSpan]::FromSeconds(2)
-$connectorTimer.Add_Tick({
-    if($script:connectorProcess -and $script:connectorProcess.HasExited){
-        if($script:connectorProcess.ExitCode -ne 0){Set-Status 'Forever connection failed. See %LOCALAPPDATA%\DawnForgeForever\launcher.log.' 0}
-        else{Set-Status 'WoW Forever session ended.' 0}
-        $script:connectorProcess.Dispose();$script:connectorProcess=$null
-    }
-})
-$connectorTimer.Start()
-$window.Add_Closed({$connectorTimer.Stop()})
 $window.Add_ContentRendered({Check-Server})
 $window.ShowDialog() | Out-Null
