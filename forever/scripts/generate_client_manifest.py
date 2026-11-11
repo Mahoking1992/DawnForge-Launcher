@@ -42,6 +42,10 @@ def main() -> None:
     if args.launcher_manifest:
         with args.launcher_manifest.open("r", encoding="utf-8-sig") as f:
             launcher = json.load(f).get("launcher")
+    # Never publish user-specific account settings, logs, screenshots, and cache.
+    # Case-insensitive because files are ultimately installed on Windows.
+    excluded_dirs = {"wtf", "cache", "logs", "screenshots", "errors", "crashes"}
+    sensitive_suffixes = {".log", ".dmp", ".mdmp", ".key", ".pem", ".p12", ".pfx"}
     files = []
     seen = set()
     for item in sources:
@@ -53,7 +57,7 @@ def main() -> None:
             paths = []
             for folder, dirs, names in os.walk(item, followlinks=False):
                 current = Path(folder)
-                dirs[:] = sorted(d for d in dirs if not (current / d).is_symlink())
+                dirs[:] = sorted(d for d in dirs if not (current / d).is_symlink() and d.lower() not in excluded_dirs)
                 paths.extend(current / n for n in sorted(names))
         else:
             continue
@@ -61,6 +65,10 @@ def main() -> None:
             if path.is_symlink() or not path.is_file():
                 raise RuntimeError("Refusing nonregular file or symlink: " + str(path))
             rel = path.relative_to(root)
+            if any(part.lower() in excluded_dirs for part in rel.parts):
+                continue
+            if path.suffix.lower() in sensitive_suffixes:
+                continue
             if any(part in (".", "..") for part in rel.parts):
                 raise RuntimeError("Unsafe path: " + str(rel))
             filename = rel.as_posix()
