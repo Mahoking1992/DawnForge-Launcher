@@ -9,6 +9,12 @@ on:
       - "!forever/update-manifest.json"
       - ".github/workflows/build-forever-launcher.yml"
 
+  pull_request:
+    branches: [main]
+    paths:
+      - "forever/**"
+      - ".github/workflows/build-forever-launcher.yml"
+
 permissions:
   contents: write
 
@@ -74,7 +80,7 @@ jobs:
         shell: pwsh
         run: |
           $manifest = Get-Content forever/update-manifest.json -Raw | ConvertFrom-Json
-          $manifest.launcher.version = "0.2.1"
+          $manifest.launcher.version = "0.2.4"
           $manifest.launcher.url = "https://raw.githubusercontent.com/Mahoking1992/DawnForge-Launcher/main/download/DawnForgeForeverLauncher.exe"
           $manifest.launcher.sha256 = (Get-FileHash download/DawnForgeForeverLauncher.exe -Algorithm SHA256).Hash.ToLowerInvariant()
           $manifest | ConvertTo-Json -Depth 10 | Set-Content forever/update-manifest.json -Encoding utf8
@@ -84,6 +90,7 @@ jobs:
           name: DawnForgeForeverLauncher-Windows
           path: download/DawnForgeForeverLauncher.exe
       - name: Publish Forever EXE and manifest without touching Vanilla
+        if: github.event_name != 'pull_request'
         shell: pwsh
         run: |
           git config user.name "DawnForge Forever Bot"
