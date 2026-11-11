@@ -45,6 +45,8 @@ jobs:
             exit 1
           }
           if ($text -match 'Gateway hostname.*TextBox|SECURE UPDATES  •') { throw "Old technical Options or footer text remains." }
+          if ($text.Contains('Background="#F0081524"') -or $text.Contains('Background="#E9081524"')) { throw "Transparent status cards cause text overlap." }
+          if (($text | Select-String -Pattern 'Background="#FF081524"' -AllMatches).Matches.Count -lt 2) { throw "Opaque status masks are missing." }
       - name: Embed blue D Windows executable icon
         shell: pwsh
         run: |
@@ -72,7 +74,7 @@ jobs:
         shell: pwsh
         run: |
           $manifest = Get-Content forever/update-manifest.json -Raw | ConvertFrom-Json
-          $manifest.launcher.version = "0.2.0"
+          $manifest.launcher.version = "0.2.1"
           $manifest.launcher.url = "https://raw.githubusercontent.com/Mahoking1992/DawnForge-Launcher/main/download/DawnForgeForeverLauncher.exe"
           $manifest.launcher.sha256 = (Get-FileHash download/DawnForgeForeverLauncher.exe -Algorithm SHA256).Hash.ToLowerInvariant()
           $manifest | ConvertTo-Json -Depth 10 | Set-Content forever/update-manifest.json -Encoding utf8
