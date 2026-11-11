@@ -1,0 +1,74 @@
+name: Build DawnForge Forever Connector (test only)
+
+on:
+  pull_request:
+    paths:
+      - "forever/connector/**"
+      - ".github/workflows/build-forever-connector.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-connector:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout DawnForge
+        uses: actions/checkout@v4
+
+      - name: Check public CA presence
+        id: cert
+        shell: pwsh
+        run: |
+          if (Test-Path "forever/connector/forever-ca.pem") {
+            "available=true" >> $env:GITHUB_OUTPUT
+          } else {
+            "available=false" >> $env:GITHUB_OUTPUT
+            Write-Host "PUBLIC Forever CA certificate is not yet committed. Connector build pending."
+          }
+
+      - name: Checkout pinned upstream (MIT)
+        if: steps.cert.outputs.available == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: MShkolenko/algalon-launcher
+          ref: 8ab061fe8a55b443af4abeccff3b4c6182318670
+          path: _forever_connector_upstream
+          persist-credentials: false
+
+      - name: Verify CA is constrained to this realm
+        if: steps.cert.outputs.available == 'true'
+        shell: pwsh
+        run: |
+          $ca = "forever/connector/forever-ca.pem"
+          $text = Get-Content $ca -Raw
+          if ($text -match 'PRIVATE KEY') { throw "Never commit CA private keys." }
+          $details = openssl x509 -in $ca -noout -subject -ext basicConstraints,nameConstraints
+          if ($LASTEXITCODE -ne 0) { throw "Cannot inspect CA certificate" }
+          $details | Write-Host
+          if (($details -join "`n") -notmatch 'CA:TRUE' -or
+              ($details -join "`n") -notmatch 'DNS:trinity[.]actual[.]battle[.]net' -or
+              ($details -join "`n") -notmatch 'X509v3 Name Constraints: critical') {
+            throw "CA must be explicitly name-constrained to trinity.actual.battle.net"
+          }
+
+      - name: Generate DawnForge-specific profile
+        if: steps.cert.outputs.available == 'true'
+        shell: pwsh
+        run: |
+          python forever/connector/prepare_profile.py --upstream _forever_connector_upstream --ca forever/connector/forever-ca.pem
+
+      - name: Build test connector
+        if: steps.cert.outputs.available == 'true'
+        shell: cmd
+        working-directory: _forever_connector_upstream/windows
+        run: call build.cmd dawnforge
+
+      - name: Upload Windows test build
+        if: steps.cert.outputs.available == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: DawnForgeForeverConnector-Windows-TEST
+          path: _forever_connector_upstream/windows/dawnforge-launcher.exe
+          if-no-files-found: error
