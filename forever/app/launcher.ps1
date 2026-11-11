@@ -53,7 +53,7 @@ function Get-Manifest {
     if(-not (Valid-Https $cfg.ManifestUrl)){throw 'Update manifest URL must be HTTPS.'}
     $req=[Net.HttpWebRequest][Net.WebRequest]::Create([string]$cfg.ManifestUrl)
     $req.Timeout=12000; $req.ReadWriteTimeout=12000
-    $req.UserAgent='DawnForgeForeverLauncher/0.1'
+    $req.UserAgent='DawnForgeForeverLauncher/0.2'
     $response=$req.GetResponse()
     if($response.ResponseUri.Scheme -ne 'https') { $response.Dispose(); throw 'Manifest redirected away from HTTPS.' }
     try {
@@ -159,7 +159,7 @@ function Update-Launcher {
     $manifest=Get-Manifest
     $remote=$manifest.launcher
     if(-not $remote -or -not $remote.version -or -not $remote.url -or -not $remote.sha256){return $false}
-    $current=[Version]'0.1.0';$latest=[Version]([string]$remote.version)
+    $current=[Version]'0.2.0';$latest=[Version]([string]$remote.version)
     if($latest -le $current){return $false}
     $res=[System.Windows.MessageBox]::Show("A newer launcher ($latest) is available. Install verified update now?",'Launcher update',[System.Windows.MessageBoxButton]::YesNo,[System.Windows.MessageBoxImage]::Question)
     if($res -ne 'Yes'){return $true}
@@ -244,7 +244,7 @@ $xaml=@'
   <StackPanel Margin="28,16"><TextBlock Text="DAWNFORGE FOREVER" FontWeight="Bold" FontFamily="Georgia" FontSize="25" Foreground="#FFE4B769"/><TextBlock x:Name="ServerTitle" Text="Checking gateway..." Foreground="#FFDBB774" FontSize="25" Margin="0,14,0,12"/><TextBlock Text="Website: dawnforge.eu" Foreground="#FFCFD7E1" FontSize="19"/><TextBlock Text="One permanent realm" Foreground="#FFAFB5BF" FontSize="18" Margin="0,12,0,0"/></StackPanel>
  </Border>
  <Border Canvas.Left="35" Canvas.Top="768" Width="998" Height="135" Background="#E9081524" CornerRadius="8" BorderBrush="#806A4B" BorderThickness="2">
-  <Grid Margin="24,20"><Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="26"/></Grid.RowDefinitions><TextBlock x:Name="Status" Text="Choose your existing WoW Forever client in Options." Foreground="#FFEBD3AA" FontSize="22" VerticalAlignment="Center" TextWrapping="Wrap"/><ProgressBar x:Name="Progress" Grid.Row="1" Maximum="100" Height="18" Background="#FF0A1320" Foreground="#FF40D36D" Value="0" /></Grid>
+  <Grid Margin="24,20"><Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="26"/></Grid.RowDefinitions><TextBlock x:Name="Status" Text="Select your existing WoW Forever game folder in Options." Foreground="#FFEBD3AA" FontSize="22" VerticalAlignment="Center" TextWrapping="Wrap"/><ProgressBar x:Name="Progress" Grid.Row="1" Maximum="100" Height="18" Background="#FF0A1320" Foreground="#FF40D36D" Value="0" /></Grid>
  </Border>
  <Button x:Name="Home" Canvas.Left="53" Canvas.Top="421" Width="298" Height="75" Background="Transparent" BorderThickness="0" Cursor="Hand"/>
  <Button x:Name="Website" Canvas.Left="358" Canvas.Top="421" Width="280" Height="75" Background="Transparent" BorderThickness="0" Cursor="Hand"/>

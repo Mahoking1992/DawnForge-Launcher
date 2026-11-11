@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - "forever/**"
+      - "!forever/update-manifest.json"
       - ".github/workflows/build-forever-launcher.yml"
 
 permissions:
@@ -21,15 +22,17 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: "1.23.x"
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Generate Forever-specific background
+      - name: Verify approved full-resolution artwork and unpack blue D icon
         shell: pwsh
         run: |
-          python -m pip install --disable-pip-version-check Pillow
-          python forever/scripts/generate_fallback_art.py
+          $expectedArt = "46dadd7161e637ac827d4bb68312ec684448f9e238f68c45afe796d5e14d3a03"
+          $actualArt = (Get-FileHash forever/app/artwork.jpg -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualArt -ne $expectedArt) { throw "The approved Alliance/Horde artwork is missing or changed." }
+          $expectedIcon = "c5583fbe60aa016c189e9a233686848ff56cf0a4b9d424b5b6c403b8237171ed"
+          $actualIcon = (Get-FileHash forever/assets/blue-icon.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualIcon -ne $expectedIcon) { throw "Blue D icon archive is missing or changed." }
+          Expand-Archive -LiteralPath forever/assets/blue-icon.zip -DestinationPath forever/app -Force
+          if (-not (Test-Path forever/app/icon.ico)) { throw "Blue D icon is missing." }
       - name: Validate PowerShell launcher source
         shell: pwsh
         run: |
@@ -41,6 +44,17 @@ jobs:
             $errors | Format-List | Out-String | Write-Host
             exit 1
           }
+          if ($text -match 'Gateway hostname.*TextBox|SECURE UPDATES  •') { throw "Old technical Options or footer text remains." }
+      - name: Embed blue D Windows executable icon
+        shell: pwsh
+        run: |
+          go install github.com/akavel/rsrc@v0.10.2
+          $rsrc = Join-Path (go env GOPATH) 'bin/rsrc.exe'
+          if (-not (Test-Path $rsrc)) { throw "Windows icon resource tool unavailable." }
+          Push-Location forever/app
+          & $rsrc -ico icon.ico -o rsrc.syso
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path rsrc.syso)) { throw "Icon resource compilation failed." }
+          Pop-Location
       - name: Build standalone Windows executable
         shell: pwsh
         env:
@@ -50,23 +64,32 @@ jobs:
         run: |
           Push-Location forever/app
           go build -trimpath -ldflags "-s -w -H windowsgui" -o "../../download/DawnForgeForeverLauncher.exe" .
+          if ($LASTEXITCODE -ne 0) { throw "Windows build failed." }
           Pop-Location
-          if (-not (Test-Path download/DawnForgeForeverLauncher.exe)) { exit 1 }
+          if (-not (Test-Path download/DawnForgeForeverLauncher.exe)) { throw "Executable was not created." }
           Get-FileHash download/DawnForgeForeverLauncher.exe -Algorithm SHA256
+      - name: Set verified launcher update feed
+        shell: pwsh
+        run: |
+          $manifest = Get-Content forever/update-manifest.json -Raw | ConvertFrom-Json
+          $manifest.launcher.version = "0.2.0"
+          $manifest.launcher.url = "https://raw.githubusercontent.com/Mahoking1992/DawnForge-Launcher/main/download/DawnForgeForeverLauncher.exe"
+          $manifest.launcher.sha256 = (Get-FileHash download/DawnForgeForeverLauncher.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          $manifest | ConvertTo-Json -Depth 10 | Set-Content forever/update-manifest.json -Encoding utf8
       - name: Upload downloadable build
         uses: actions/upload-artifact@v4
         with:
           name: DawnForgeForeverLauncher-Windows
           path: download/DawnForgeForeverLauncher.exe
-      - name: Publish Forever EXE without touching Vanilla files
+      - name: Publish Forever EXE and manifest without touching Vanilla
         shell: pwsh
         run: |
           git config user.name "DawnForge Forever Bot"
           git config user.email "actions@users.noreply.github.com"
-          git add download/DawnForgeForeverLauncher.exe
+          git add download/DawnForgeForeverLauncher.exe forever/update-manifest.json
           if (git diff --cached --quiet) {
-            Write-Host "Forever binary already current."
+            Write-Host "Forever binary and manifest already current."
           } else {
-            git commit -m "Publish independent DawnForge Forever Windows launcher"
+            git commit -m "Publish approved Forever launcher graphics and blue D icon"
             git push
           }
