@@ -1,0 +1,72 @@
+name: Build DawnForge Forever Launcher (independent)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "forever/**"
+      - ".github/workflows/build-forever-launcher.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  build-forever:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23.x"
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Generate Forever-specific background
+        shell: pwsh
+        run: |
+          python -m pip install --disable-pip-version-check Pillow
+          python forever/scripts/generate_fallback_art.py
+      - name: Validate PowerShell launcher source
+        shell: pwsh
+        run: |
+          $text = Get-Content forever/app/launcher.ps1 -Raw
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseInput($text,[ref]$tokens,[ref]$errors)|Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | Format-List | Out-String | Write-Host
+            exit 1
+          }
+      - name: Build standalone Windows executable
+        shell: pwsh
+        env:
+          GOOS: windows
+          GOARCH: amd64
+          CGO_ENABLED: "0"
+        run: |
+          Push-Location forever/app
+          go build -trimpath -ldflags "-s -w -H windowsgui" -o "../../download/DawnForgeForeverLauncher.exe" .
+          Pop-Location
+          if (-not (Test-Path download/DawnForgeForeverLauncher.exe)) { exit 1 }
+          Get-FileHash download/DawnForgeForeverLauncher.exe -Algorithm SHA256
+      - name: Upload downloadable build
+        uses: actions/upload-artifact@v4
+        with:
+          name: DawnForgeForeverLauncher-Windows
+          path: download/DawnForgeForeverLauncher.exe
+      - name: Publish Forever EXE without touching Vanilla files
+        shell: pwsh
+        run: |
+          git config user.name "DawnForge Forever Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add download/DawnForgeForeverLauncher.exe
+          if (git diff --cached --quiet) {
+            Write-Host "Forever binary already current."
+          } else {
+            git commit -m "Publish independent DawnForge Forever Windows launcher"
+            git push
+          }
