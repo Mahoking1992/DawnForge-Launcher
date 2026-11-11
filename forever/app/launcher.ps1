@@ -60,7 +60,7 @@ function Get-Manifest {
         $stream=$response.GetResponseStream()
         $reader=New-Object IO.StreamReader($stream)
         $raw=$reader.ReadToEnd()
-        if($raw.Length -gt 1048576){throw 'Manifest exceeds 1 MB.'}
+        if($raw.Length -gt 4194304){throw 'Manifest exceeds 4 MB.'}
         $obj=$raw | ConvertFrom-Json
     } finally {if($reader){$reader.Dispose()};$response.Dispose()}
     if($obj.schemaVersion -ne 1){throw 'Unsupported manifest schema.'}
@@ -73,40 +73,95 @@ function Safe-Target([string]$base,[string]$relative) {
     if(-not $full.StartsWith($fullBase,[StringComparison]::OrdinalIgnoreCase)){throw 'Manifest attempted to escape the selected client directory.'}
     return $full
 }
-function Fetch-VerifiedFile([string]$url,[string]$sha,[string]$target,[Int64]$maxBytes=85899345920) {
+function Fetch-VerifiedFile([string]$url,[string]$sha,[string]$target,[Int64]$maxBytes=85899345920,[Int64]$expectedSize=-1) {
     if(-not (Valid-Https $url)){throw "Untrusted download address (HTTPS required): $url"}
     if($sha -notmatch '^[A-Fa-f0-9]{64}$'){throw 'SHA-256 missing or invalid in manifest.'}
-    if(Test-Path -LiteralPath $target){
-        $existing=(Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash
-        if($existing -ieq $sha){return $false}
+    if($expectedSize -gt $maxBytes){throw 'File exceeds maximum permitted size.'}
+    if(Test-Path -LiteralPath $target) {
+        if($expectedSize -lt 0 -or ([IO.FileInfo]$target).Length -eq $expectedSize) {
+            if((Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -ieq $sha){return $false}
+        }
     }
     $dir=Split-Path -Parent $target
     [IO.Directory]::CreateDirectory($dir) | Out-Null
     $part="$target.dfpart"
-    if(Test-Path -LiteralPath $part){Remove-Item -LiteralPath $part -Force}
-    $req=[Net.HttpWebRequest][Net.WebRequest]::Create($url)
-    $req.Timeout=20000; $req.ReadWriteTimeout=30000
-    $req.UserAgent='DawnForgeForeverLauncher/0.1'
-    $response=$req.GetResponse()
-    if($response.ResponseUri.Scheme -ne 'https') { $response.Dispose(); throw 'Download redirected away from HTTPS.' }
-    $stream=$null; $out=$null
+    [Int64]$offset=0
+    if(Test-Path -LiteralPath $part){$offset=([IO.FileInfo]$part).Length}
+    if($offset -gt $maxBytes -or ($expectedSize -ge 0 -and $offset -gt $expectedSize)) {
+        Remove-Item -LiteralPath $part -Force
+        $offset=0
+    }
+    $response=$null
+    for($attempt=0;$attempt -lt 2;$attempt++){
+        $req=[Net.HttpWebRequest][Net.WebRequest]::Create($url)
+        $req.Timeout=20000
+        $req.ReadWriteTimeout=30000
+        $req.UserAgent='DawnForgeForeverLauncher/0.2.4'
+        $req.AutomaticDecompression=[Net.DecompressionMethods]::None
+        if($offset -gt 0){$req.AddRange($offset)}
+        try {
+            $response=$req.GetResponse()
+        } catch {
+            if($offset -gt 0){
+                Remove-Item -LiteralPath $part -Force -ErrorAction SilentlyContinue
+                $offset=0
+                continue
+            }
+            throw
+        }
+        if($response.ResponseUri.Scheme -ne 'https') {
+            $response.Dispose()
+            throw 'Download redirected away from HTTPS.'
+        }
+        if($offset -gt 0) {
+            $range=[string]$response.Headers['Content-Range']
+            if($response.StatusCode -ne [Net.HttpStatusCode]::PartialContent -or
+               -not $range.StartsWith("bytes $offset-",[StringComparison]::OrdinalIgnoreCase)) {
+                $response.Dispose()
+                $response=$null
+                Remove-Item -LiteralPath $part -Force
+                $offset=0
+                continue
+            }
+        }
+        break
+    }
+    if($null -eq $response){throw 'Unable to resume or restart file download.'}
+    $stream=$null
+    $out=$null
     try {
-        if($response.ContentLength -gt $maxBytes){throw 'File exceeds maximum permitted size.'}
+        if($response.ContentLength -ge 0 -and $offset+$response.ContentLength -gt $maxBytes){
+            throw 'File exceeds maximum permitted size.'
+        }
         $stream=$response.GetResponseStream()
-        $out=[IO.File]::Create($part)
+        $mode=if($offset -gt 0){[IO.FileMode]::Append}else{[IO.FileMode]::Create}
+        $out=[IO.File]::Open($part,$mode,[IO.FileAccess]::Write,[IO.FileShare]::None)
         $buffer=New-Object byte[] 1048576
-        [Int64]$total=0
-        while(($n=$stream.Read($buffer,0,$buffer.Length)) -gt 0){
+        [Int64]$total=$offset
+        [Int64]$denominator=if($expectedSize -ge 0){$expectedSize}else{
+            if($response.ContentLength -ge 0){$offset+$response.ContentLength}else{0}
+        }
+        while(($n=$stream.Read($buffer,0,$buffer.Length)) -gt 0) {
             $total+=$n
             if($total -gt $maxBytes){throw 'Download exceeded permitted size.'}
             $out.Write($buffer,0,$n)
-            if($response.ContentLength -gt 0){Set-Status ('Downloading '+[IO.Path]::GetFileName($target)) ([int]($total*100/$response.ContentLength))}
+            if($denominator -gt 0) {
+                Set-Status ('Downloading '+[IO.Path]::GetFileName($target)+' - '+[Math]::Round($total/1MB,1)+' MB') ([int]([Math]::Min(100,100*$total/$denominator)))
+            }
         }
     } finally {
-        if($out){$out.Dispose()};if($stream){$stream.Dispose()};$response.Dispose()
+        if($out){$out.Dispose()}
+        if($stream){$stream.Dispose()}
+        $response.Dispose()
+    }
+    if($expectedSize -ge 0 -and ([IO.FileInfo]$part).Length -ne $expectedSize) {
+        throw "Download incomplete: $target (partial file kept for resume)"
     }
     $got=(Get-FileHash -LiteralPath $part -Algorithm SHA256).Hash
-    if($got -ine $sha){Remove-Item -LiteralPath $part -Force;throw "SHA-256 mismatch: $target"}
+    if($got -ine $sha) {
+        Remove-Item -LiteralPath $part -Force
+        throw "SHA-256 mismatch: $target"
+    }
     Move-Item -LiteralPath $part -Destination $target -Force
     return $true
 }
@@ -115,7 +170,9 @@ function Ensure-GameFolder {
     $dialog=New-Object Windows.Forms.FolderBrowserDialog
     $dialog.Description='Choose your own WoW Forever client folder. Official client files are not provided by DawnForge.'
     if($dialog.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK){return $false}
-    $cfg.GameDir=$dialog.SelectedPath
+    $selected=$dialog.SelectedPath
+    if((Split-Path -Leaf $selected) -eq '_forever_' -and (Test-Path -LiteralPath (Join-Path $selected 'Wow.exe'))) { $selected=Split-Path -Parent $selected }
+    $cfg.GameDir=$selected
     Save-Settings
     return $true
 }
@@ -123,7 +180,7 @@ function Sync-Files([bool]$repair=$false) {
     if(-not (Ensure-GameFolder)){return}
     $manifest=Get-Manifest
     $files=@($manifest.files | Where-Object { $null -ne $_ })
-    if($files.Count -gt 2000){throw 'Manifest file count exceeds safety limit.'}
+    if($files.Count -gt 30000){throw 'Manifest file count exceeds safety limit.'}
     if($files.Count -eq 0) {
         Set-Status 'No downloadable files have been published yet.' 0
         Msg 'No DawnForge patches are currently published. Select your existing legitimate Forever client in Options. Full game files are not distributed by this launcher.'
@@ -135,9 +192,11 @@ function Sync-Files([bool]$repair=$false) {
         if(-not $f.path -or -not $f.url -or -not $f.sha256){throw 'Incomplete file entry in manifest.'}
         $dest=Safe-Target ([string]$cfg.GameDir) ([string]$f.path)
         Set-Status "Checking $count / $($files.Count): $($f.path)" 0
-        Fetch-VerifiedFile ([string]$f.url) ([string]$f.sha256) $dest | Out-Null
+        $fileSize=if($null -ne $f.size){[Int64]$f.size}else{[Int64]-1}
+        Fetch-VerifiedFile ([string]$f.url) ([string]$f.sha256) $dest 85899345920 $fileSize | Out-Null
     }
     Set-Status 'Client files verified and up to date.' 100
+    Refresh-PlayState
 }
 function Check-Server {
     if([string]::IsNullOrWhiteSpace($cfg.ServerHost)){
@@ -159,7 +218,7 @@ function Update-Launcher {
     $manifest=Get-Manifest
     $remote=$manifest.launcher
     if(-not $remote -or -not $remote.version -or -not $remote.url -or -not $remote.sha256){return $false}
-    $current=[Version]'0.2.1';$latest=[Version]([string]$remote.version)
+    $current=[Version]'0.2.4';$latest=[Version]([string]$remote.version)
     if($latest -le $current){return $false}
     $res=[System.Windows.MessageBox]::Show("A newer launcher ($latest) is available. Install verified update now?",'Launcher update',[System.Windows.MessageBoxButton]::YesNo,[System.Windows.MessageBoxImage]::Question)
     if($res -ne 'Yes'){return $true}
@@ -182,16 +241,42 @@ for($i=0;$i -lt 40;$i++) {
     $window.Close()
     return $true
 }
+function Client-Installed {
+    if([string]::IsNullOrWhiteSpace($cfg.GameDir)){return $false}
+    $gameRoot=[string]$cfg.GameDir
+    return (Test-Path -LiteralPath (Join-Path $gameRoot '_forever_\Wow.exe') -PathType Leaf) -and
+           (Test-Path -LiteralPath (Join-Path $gameRoot 'Data') -PathType Container)
+}
+function Refresh-PlayState {
+    if(Client-Installed) {
+        $window.FindName('Play').Content='PLAY'
+    } else {
+        $window.FindName('Play').Content='DOWNLOAD'
+    }
+}
 function Play-Game {
     if(-not (Ensure-GameFolder)){return}
+    if(-not (Client-Installed)) {
+        Sync-Files
+        if(-not (Client-Installed)) {
+            Refresh-PlayState
+            return
+        }
+    }
     $connector=[string]$cfg.ConnectorExe
     if([string]::IsNullOrWhiteSpace($connector)){
-        Err 'DawnForge Forever connection is not ready yet. Please check for launcher updates.'
-        Set-Status 'Connection helper not configured.' 0
+        $bundled=Join-Path $AppDirectory 'DawnForgeForeverConnector.exe'
+        if(Test-Path -LiteralPath $bundled -PathType Leaf){$connector=$bundled}
+    }
+    if([string]::IsNullOrWhiteSpace($connector)){
+        Err 'The client is installed but the compatible Forever connection helper is not available yet. The game cannot be launched against this realm safely.'
+        Set-Status 'Client installed; private-realm connection is not configured.' 100
         return
     }
-    if(-not [IO.Path]::IsPathRooted($connector)){$connector=Safe-Target ([string]$cfg.GameDir) $connector}
-    if(-not (Test-Path -LiteralPath $connector -PathType Leaf)) {Err "Connection helper not found: $connector";return}
+    if(-not [IO.Path]::IsPathRooted($connector)){
+        $connector=Safe-Target ([string]$cfg.GameDir) $connector
+    }
+    if(-not (Test-Path -LiteralPath $connector -PathType Leaf)){Err "Connection helper not found: $connector";return}
     Start-Process -FilePath $connector -WorkingDirectory (Split-Path -Parent $connector)
     Set-Status 'Started compatible Forever connection helper.' 100
 }
@@ -227,6 +312,7 @@ function Show-Options {
             Err 'The selected game folder does not exist.'
             return
         }
+        if((Split-Path -Leaf $chosen) -eq '_forever_' -and (Test-Path -LiteralPath (Join-Path $chosen 'Wow.exe'))) { $chosen=Split-Path -Parent $chosen }
         $cfg.GameDir=$chosen
         Save-Settings
         $o.DialogResult=$true
@@ -234,6 +320,7 @@ function Show-Options {
     })
     $o.ShowDialog() | Out-Null
     Check-Server
+    Refresh-PlayState
 }
 $xaml=@'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="DawnForge Forever Launcher" Width="1229" Height="819" MinWidth="900" MinHeight="590" Background="#060C16" WindowStyle="None" ResizeMode="CanResizeWithGrip" WindowStartupLocation="CenterScreen" ShowInTaskbar="True">
@@ -251,7 +338,7 @@ $xaml=@'
  <Button x:Name="Downloads" Canvas.Left="649" Canvas.Top="421" Width="276" Height="75" Background="Transparent" BorderThickness="0" Cursor="Hand"/>
  <Button x:Name="Updates" Canvas.Left="929" Canvas.Top="421" Width="279" Height="75" Background="Transparent" BorderThickness="0" Cursor="Hand"/>
  <Button x:Name="Options" Canvas.Left="1214" Canvas.Top="421" Width="280" Height="75" Background="Transparent" BorderThickness="0" Cursor="Hand"/>
- <Button x:Name="Play" Canvas.Left="1065" Canvas.Top="773" Width="434" Height="125" Background="Transparent" BorderThickness="0" Cursor="Hand"/>
+ <Button x:Name="Play" Canvas.Left="1065" Canvas.Top="773" Width="434" Height="125" Background="#FF12365B" BorderBrush="#FFD2AA61" BorderThickness="2" Foreground="#FFFFE7B7" FontSize="41" FontFamily="Georgia" FontWeight="Bold" Content="DOWNLOAD" Cursor="Hand"/>
  <Button x:Name="Close" Canvas.Left="1482" Canvas.Top="0" Width="54" Height="50" Background="Transparent" BorderThickness="0" Cursor="Hand"/>
  <Button x:Name="Minimize" Canvas.Left="1355" Canvas.Top="0" Width="55" Height="50" Background="Transparent" BorderThickness="0" Cursor="Hand"/>
  <Button x:Name="Maximize" Canvas.Left="1422" Canvas.Top="0" Width="55" Height="50" Background="Transparent" BorderThickness="0" Cursor="Hand"/>
@@ -278,5 +365,5 @@ $window.FindName('Options').Add_Click({try{Show-Options}catch{Err $_.Exception.M
 $window.FindName('Downloads').Add_Click({try{Sync-Files}catch{Set-Status 'Download or repair failed.' 0;Err $_.Exception.Message}})
 $window.FindName('Updates').Add_Click({try{if(-not (Update-Launcher)){Sync-Files}}catch{Set-Status 'Update check failed.' 0;Err $_.Exception.Message}})
 $window.FindName('Play').Add_Click({try{Play-Game}catch{Err $_.Exception.Message}})
-$window.Add_ContentRendered({Check-Server})
+$window.Add_ContentRendered({Check-Server;Refresh-PlayState})
 $window.ShowDialog() | Out-Null
