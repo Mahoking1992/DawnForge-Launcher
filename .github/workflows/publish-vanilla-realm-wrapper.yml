@@ -1,0 +1,55 @@
+name: Publish integrated Vanilla installer realmlist fix
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "tools/vanilla-installer-wrapper/**"
+      - ".github/workflows/publish-vanilla-realm-wrapper.yml"
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23.x"
+      - name: Preserve original Vanilla installer and embed its exact bytes
+        shell: pwsh
+        run: |
+          if (!(Test-Path download/DawnForgeOriginalSetup.exe)) {
+            Copy-Item download/DawnForgeLauncherSetup.exe download/DawnForgeOriginalSetup.exe
+          }
+          Copy-Item download/DawnForgeOriginalSetup.exe tools/vanilla-installer-wrapper/original-setup.exe
+      - name: Build Windows EXE and verify automatic realmlist correction
+        shell: pwsh
+        run: |
+          Push-Location tools/vanilla-installer-wrapper
+          go build -trimpath -ldflags "-s -w -H windowsgui" -o ../../download/DawnForgeLauncherSetup.new.exe .
+          if ($LASTEXITCODE -ne 0) { throw "Build failed" }
+          Pop-Location
+          $fixture=Join-Path $env:RUNNER_TEMP 'DawnForge-TestGame'
+          New-Item -ItemType Directory -Force $fixture | Out-Null
+          Set-Content -LiteralPath (Join-Path $fixture 'Wow.exe') -Value 'test'
+          Set-Content -LiteralPath (Join-Path $fixture 'realmlist.wtf') -Value 'set realmlist dawnforge.eu'
+          $env:DAWNFORGE_WRAPPER_TEST_DIR=$fixture
+          $env:DAWNFORGE_WRAPPER_TEST_INSTALLER="$env:SystemRoot\System32\cmd.exe"
+          $p=Start-Process -FilePath (Resolve-Path download/DawnForgeLauncherSetup.new.exe) -PassThru -Wait
+          if ($p.ExitCode -ne 0) { throw "Wrapper process test failed" }
+          if ((Get-Content -LiteralPath (Join-Path $fixture 'realmlist.wtf') -Raw).Trim() -ne 'set realmlist play.dawnforge.eu') { throw "realmlist repair failed" }
+          if (!(Test-Path (Join-Path $fixture 'realmlist.wtf.dawnforge-backup'))) { throw "Original realmlist backup missing" }
+          Write-Host "Confirmed: original installer embedded; realm correction works; backup created."
+      - name: Publish single EXE and preserve original as backup
+        shell: pwsh
+        run: |
+          Move-Item -Force download/DawnForgeLauncherSetup.new.exe download/DawnForgeLauncherSetup.exe
+          Compress-Archive -Path download/DawnForgeLauncherSetup.exe -DestinationPath download/DawnForgeLauncherSetup.zip -Force
+          Compress-Archive -Path download/DawnForgeLauncherSetup.exe -DestinationPath download/DawnForgeLauncherSetup_v1.0.12.zip -Force
+          git config user.name "DawnForge Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add download/DawnForgeLauncherSetup.exe download/DawnForgeOriginalSetup.exe download/DawnForgeLauncherSetup.zip download/DawnForgeLauncherSetup_v1.0.12.zip
+          if (-not (git diff --cached --quiet)) {
+            git commit -m "Publish single Vanilla installer with automatic play.dawnforge.eu correction"
+            git push
+          }
