@@ -1,4 +1,4 @@
-name: Publish original DawnForge installer with Contabo game URL
+name: Repair Vanilla original installer client checksum
 
 on:
   workflow_dispatch:
@@ -14,49 +14,40 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install RAR5 extractor
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y unar
-      - name: Extract original installer (not Go wrapper)
-        run: |
-          mkdir -p /tmp/dawnforge-original
-          unar -force-overwrite -output-directory /tmp/dawnforge-original download/DawnForgeLauncherSetup.rar
-          test -s /tmp/dawnforge-original/DawnForgeLauncherSetup.exe
-      - name: Patch only client ZIP URL and expected SHA-256 in original installer
+      - name: Replace only incorrect client ZIP SHA-256 in published Vanilla installer
         run: |
           python3 - <<'PY'
           from pathlib import Path
           from zipfile import ZipFile, ZIP_DEFLATED
           import hashlib
-          p=Path("/tmp/dawnforge-original/DawnForgeLauncherSetup.exe")
+          p=Path("download/DawnForgeLauncherSetup.exe")
           data=p.read_bytes()
-          old=b"https://dawnforge.eu/launcher/client/DawnForge-1.12.1.zip"
-          new=b"https://dawnforge.eu/download/DawnForge-1.12.1.zip?v=1111"
-          assert len(old)==len(new)
-          assert data[:2]==b"MZ"
-          if data.count(old)!=1: raise SystemExit(f"Expected exactly one game install URL in original EXE, got {data.count(old)}")
           old_sha=b"8a91accc8d6c06d21b59df94130966e607a1bea1f002a0bfb411cfc9384e3ecd"
           new_sha=b"481a61c9f61182b6485edc1dc2bb7e3911e1d82fabbcb399542d131e60d9ee83"
-          assert len(old_sha)==len(new_sha)==64
-          if data.count(old_sha)!=1: raise SystemExit(f"Expected exactly one old client SHA-256, got {data.count(old_sha)}")
-          patched=data.replace(old,new).replace(old_sha,new_sha)
-          assert len(patched)==len(data)
-          if patched.count(old_sha) or patched.count(new_sha)!=1: raise SystemExit("Client checksum replacement failed")
-          expected=data.replace(old,new).replace(old_sha,new_sha)
-          if patched!=expected: raise SystemExit("Unexpected binary changes")
-          print("ZIP SHA256 used by installer:",new_sha.decode())
-          destination=Path("download/DawnForgeLauncherSetup.exe")
-          destination.write_bytes(patched)
-          for archive in ("DawnForgeLauncherSetup.zip", "DawnForgeLauncherSetup_v1.0.12.zip"):
-              with ZipFile(Path("download")/archive,"w",compression=ZIP_DEFLATED,compresslevel=9) as z:
-                  z.write(destination,arcname="DawnForgeLauncherSetup.exe")
-          print("Original installer: corrected ZIP URL and client SHA256. EXE SHA256:",hashlib.sha256(patched).hexdigest())
+          url=b"https://dawnforge.eu/download/DawnForge-1.12.1.zip?v=1111"
+          if data[:2]!=b"MZ" or len(data)!=10605568: raise SystemExit("Unexpected original Vanilla installer; refusing to modify")
+          if data.count(url)!=1: raise SystemExit("Expected client ZIP download URL not found exactly once")
+          if data.count(old_sha)==1 and data.count(new_sha)==0:
+              patched=data.replace(old_sha,new_sha)
+          elif data.count(old_sha)==0 and data.count(new_sha)==1:
+              patched=data
+          else: raise SystemExit("Unexpected client checksum state; refusing to modify")
+          if len(patched)!=len(data) or patched.count(new_sha)!=1: raise SystemExit("Checksum correction validation failed")
+          p.write_bytes(patched)
+          for name in ("DawnForgeLauncherSetup.zip","DawnForgeLauncherSetup_v1.0.12.zip"):
+              with ZipFile(Path("download")/name,"w",compression=ZIP_DEFLATED,compresslevel=9) as z:
+                  z.write(p,arcname="DawnForgeLauncherSetup.exe")
+          print("EXPECTED CLIENT ZIP SHA256",new_sha.decode())
+          print("FIXED INSTALLER SHA256",hashlib.sha256(patched).hexdigest())
           PY
-      - name: Publish original installer
+      - name: Publish repaired Vanilla installer without changing the launcher appearance
         run: |
           git config user.name "DawnForge Bot"
           git config user.email "actions@users.noreply.github.com"
           git add download/DawnForgeLauncherSetup.exe download/DawnForgeLauncherSetup.zip download/DawnForgeLauncherSetup_v1.0.12.zip
-          git commit -m "Fix Vanilla client ZIP SHA-256 verification in original installer"
-          git push
+          if git diff --cached --quiet; then
+            echo "Vanilla installer already repaired."
+          else
+            git commit -m "Correct Vanilla client archive checksum in original installer"
+            git push
+          fi
