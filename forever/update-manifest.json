@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "launcher": {
-    "version": "0.2.3",
+    "version": "0.2.4",
     "url": "https://raw.githubusercontent.com/Mahoking1992/DawnForge-Launcher/main/download/DawnForgeForeverLauncher.exe",
-    "sha256": "daed5c039cc57c33dc203a2e13aaeb5140d9c9037459e330abc73f1473c8a9ad"
+    "sha256": "31876140bbd60484360ecb3a3da6da757ae86ca6ab151e8f73ad2fba1f958f3b"
   },
   "files": []
 }
