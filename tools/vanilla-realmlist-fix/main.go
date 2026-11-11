@@ -1,7 +1,6 @@
 package main
 
 import (
- "encoding/json"
  "errors"
  "fmt"
  "os"
@@ -30,9 +29,10 @@ func fix(folder string) error {
 }
 func main(){
  args:=os.Args[1:]
+ silent:=false
+ if len(args)==2 && args[0]=="--silent" {silent=true;args=args[1:]}
  if len(args)!=1 { fail(errors.New("Provide the installed Vanilla client folder as the only argument (the folder containing Wow.exe and realmlist.wtf). No changes were made."));return}
  folder:=args[0]
  if err:=fix(folder);err!=nil{fail(err);return}
- notify("Vanilla realmlist is now play.dawnforge.eu. Original file was backed up.")
- _=json.Valid
+ if !silent {notify("Vanilla realmlist is now play.dawnforge.eu. Original file was backed up.")}
 }
