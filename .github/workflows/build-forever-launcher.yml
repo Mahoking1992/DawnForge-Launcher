@@ -58,7 +58,6 @@ jobs:
         shell: pwsh
         run: |
           & ./forever/scripts/test-zip-installer.ps1
-          if ($LASTEXITCODE -ne 0) { throw "Synthetic ZIP installer tests failed" }
       - name: Embed blue D Windows executable icon
         shell: pwsh
         run: |
