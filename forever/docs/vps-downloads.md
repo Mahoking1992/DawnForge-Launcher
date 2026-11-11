@@ -48,16 +48,32 @@ Once the source repo and script are available on the VPS:
 python3 forever/scripts/generate_client_manifest.py \
   --client /opt/forever/client \
   --base-url https://dawnforge.eu/forever-client/ \
-  --launcher-manifest forever/update-manifest.json \
-  --output /tmp/forever-client-manifest.json
+  --output /srv/forever-download/manifest.json
 ~~~
 
-The URL above is only an example: it has NOT been deployed or tested. The generator hashes original game files in chunks and produces a JSON list with path, SHA-256, size and HTTPS URL. It does not copy or compress game data. Publish this manifest only after links and permission to distribute the files are verified. Retain the launcher update SHA-256 and URL in the manifest.
+The URL above is the Forever client URL already configured on the operator's VPS, and tested *locally* with 200 for .build.info and 206 for a 1 KiB Range request on Wow.exe. An external download must still be confirmed. The generator hashes original game files in chunks and produces a JSON list with path, SHA-256, size and HTTPS URL. It does not copy or compress game data. Publish only after confirming every selected file may be distributed and is non-sensitive. The launcher update manifest and its hashes stay separately on GitHub.
 
 ## Step 4: launcher and connection
 
-The Forever launcher now has a first-run DOWNLOAD > PLAY flow, partial-file resume and per-file SHA-256 verification. Existing legitimate installs may be selected.
+The Forever launcher now has a first-run DOWNLOAD > PLAY flow, partial-file resume and per-file SHA-256 verification. Its **client download manifest** is https://dawnforge.eu/forever-client/manifest.json; **launcher self-updates** remain on https://raw.githubusercontent.com/Mahoking1992/DawnForge-Launcher/main/forever/update-manifest.json. The HTTPS client manifest must be explicitly exposed by an exact-match Nginx location since the existing fallback /forever-client/ location returns 404. Existing legitimate installs may be selected.
 
 The WoW Forever 1.60 client is not redirected using the Vanilla realmlist. PLAY requires a compatible realm-specific connector and properly configured public authentication gateway, scoped CA certificate, host, and portal. Never publish CA private keys. Reference code: https://github.com/MShkolenko/algalon-launcher ; do not use its Algalon realm profile unchanged.
 
 Test on Windows: download, interruption/resume, SHA-256, Play, login, realm selection and entry. Until these pass, do not advertise the launcher as fully working.
+
+## Step 3A: publish the **manifest only**
+
+Add this exact location to the existing SSL server block once the generated JSON exists and has been reviewed:
+
+~~~nginx
+location = /forever-client/manifest.json {
+    alias /srv/forever-download/manifest.json;
+    default_type application/json;
+    add_header Cache-Control "no-store" always;
+    limit_except GET { deny all; }
+}
+~~~
+
+This path must not conflict with the existing fallback `location ^~ /forever-client/ { return 404; }`: exact matches take precedence. Confirm `nginx -t`, reload, and test locally with `curl --noproxy '*' --resolve dawnforge.eu:443:127.0.0.1 ...`.
+
+Do **not** publish files containing passwords, client accounts, credentials, authentication tokens, logs, private keys or private user configuration from the client folder. The generation script enumerates all files in Data/ and _forever_/ by default, so perform a path audit and exclude sensitive paths before deployment.
