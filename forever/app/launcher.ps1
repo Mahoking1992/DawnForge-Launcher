@@ -186,6 +186,8 @@ function Sync-Files([bool]$repair=$false) {
         Msg 'No DawnForge patches are currently published. Select your existing legitimate Forever client in Options. Full game files are not distributed by this launcher.'
         return
     }
+    $pending=Join-Path ([string]$cfg.GameDir) '.dawnforge-forever-download-pending'
+    [IO.File]::WriteAllText($pending,'Pending download or repair; resume via DOWNLOAD.')
     $count=0
     foreach($f in $files){
         $count++
@@ -195,6 +197,7 @@ function Sync-Files([bool]$repair=$false) {
         $fileSize=if($null -ne $f.size){[Int64]$f.size}else{[Int64]-1}
         Fetch-VerifiedFile ([string]$f.url) ([string]$f.sha256) $dest 85899345920 $fileSize | Out-Null
     }
+    Remove-Item -LiteralPath $pending -Force
     Set-Status 'Client files verified and up to date.' 100
     Refresh-PlayState
 }
@@ -244,6 +247,7 @@ for($i=0;$i -lt 40;$i++) {
 function Client-Installed {
     if([string]::IsNullOrWhiteSpace($cfg.GameDir)){return $false}
     $gameRoot=[string]$cfg.GameDir
+    if(Test-Path -LiteralPath (Join-Path $gameRoot '.dawnforge-forever-download-pending')){return $false}
     return (Test-Path -LiteralPath (Join-Path $gameRoot '_forever_\Wow.exe') -PathType Leaf) -and
            (Test-Path -LiteralPath (Join-Path $gameRoot 'Data') -PathType Container)
 }
