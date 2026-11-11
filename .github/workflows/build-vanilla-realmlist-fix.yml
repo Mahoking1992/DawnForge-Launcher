@@ -28,7 +28,7 @@ jobs:
           New-Item -Force -ItemType Directory $dir | Out-Null
           Set-Content -Path (Join-Path $dir 'Wow.exe') -Value 'fixture'
           Set-Content -Path (Join-Path $dir 'realmlist.wtf') -Value 'set realmlist dawnforge.eu'
-          & ./download/DawnForgeRealmlistFix.exe --silent $dir
+          Start-Process -FilePath (Resolve-Path ./download/DawnForgeRealmlistFix.exe) -ArgumentList @('--silent', ('"' + $dir + '"')) -Wait
           if ((Get-Content (Join-Path $dir 'realmlist.wtf') -Raw).Trim() -ne 'set realmlist play.dawnforge.eu') { throw 'Fix did not work' }
       - name: Publish only standalone repair tool
         shell: pwsh
