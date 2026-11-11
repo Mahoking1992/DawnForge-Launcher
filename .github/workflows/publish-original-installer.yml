@@ -14,6 +14,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Inspect embedded realmlist strings without modifying the EXE
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          b=Path('download/DawnForgeLauncherSetup.exe').read_bytes()
+          for term in [b'set realmlist ',b'dawnforge.eu',b'play.dawnforge.eu',b'realmlist.wtf',b'settings.json']:
+              positions=[]; at=0
+              while (at:=b.find(term,at))!=-1:
+                  positions.append(at);at+=len(term)
+              print(repr(term), 'count',len(positions),'offsets',positions[:25])
+              for at in positions[:6]:
+                  print('  context',repr(b[max(0,at-90):at+len(term)+130])[:450])
+          PY
       - name: Replace only incorrect client ZIP SHA-256 in published Vanilla installer
         run: |
           python3 - <<'PY'
