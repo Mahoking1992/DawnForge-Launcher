@@ -3,7 +3,7 @@ name: Build DawnForge Forever Launcher (independent)
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: ["forever/play-connector-70"]
     paths:
       - "forever/**"
       - "!forever/update-manifest.json"
@@ -22,6 +22,13 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: "1.23.x"
+      - name: Verify the bundled Forever connector
+        shell: pwsh
+        run: |
+          $expected = (Get-Content forever/connector/SHA256SUMS -Raw).Split(' ')[0].Trim().ToLowerInvariant()
+          $actual = (Get-FileHash forever/app/forever-connector.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) { throw "Bundled Forever connector SHA-256 mismatch" }
+          if ($expected.Length -ne 64) { throw "Invalid bundled connector digest" }
       - name: Verify approved full-resolution artwork and unpack blue D icon
         shell: pwsh
         run: |
@@ -70,28 +77,34 @@ jobs:
           Pop-Location
           if (-not (Test-Path download/DawnForgeForeverLauncher.exe)) { throw "Executable was not created." }
           Get-FileHash download/DawnForgeForeverLauncher.exe -Algorithm SHA256
-      - name: Set verified launcher update feed
+      - name: Publish only Forever EXE and update manifest to main
         shell: pwsh
         run: |
-          $manifest = Get-Content forever/update-manifest.json -Raw | ConvertFrom-Json
-          $manifest.launcher.version = "0.2.1"
+          $ErrorActionPreference = "Stop"
+          $releaseDir = Join-Path $env:RUNNER_TEMP "dawnforge-forever-main"
+          git fetch origin main
+          if ($LASTEXITCODE -ne 0) { throw "Cannot fetch main" }
+          git worktree add -b forever-release-022 $releaseDir origin/main
+          if ($LASTEXITCODE -ne 0) { throw "Cannot check out release worktree" }
+          $sourceExe = Join-Path $pwd "download/DawnForgeForeverLauncher.exe"
+          $targetExe = Join-Path $releaseDir "download/DawnForgeForeverLauncher.exe"
+          Copy-Item -LiteralPath $sourceExe -Destination $targetExe -Force
+          $sha = (Get-FileHash -LiteralPath $targetExe -Algorithm SHA256).Hash.ToLowerInvariant()
+          $manifestPath = Join-Path $releaseDir "forever/update-manifest.json"
+          $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
+          $manifest.launcher.version = "0.2.2"
           $manifest.launcher.url = "https://raw.githubusercontent.com/Mahoking1992/DawnForge-Launcher/main/download/DawnForgeForeverLauncher.exe"
-          $manifest.launcher.sha256 = (Get-FileHash download/DawnForgeForeverLauncher.exe -Algorithm SHA256).Hash.ToLowerInvariant()
-          $manifest | ConvertTo-Json -Depth 10 | Set-Content forever/update-manifest.json -Encoding utf8
-      - name: Upload downloadable build
-        uses: actions/upload-artifact@v4
-        with:
-          name: DawnForgeForeverLauncher-Windows
-          path: download/DawnForgeForeverLauncher.exe
-      - name: Publish Forever EXE and manifest without touching Vanilla
-        shell: pwsh
-        run: |
-          git config user.name "DawnForge Forever Bot"
-          git config user.email "actions@users.noreply.github.com"
-          git add download/DawnForgeForeverLauncher.exe forever/update-manifest.json
-          if (git diff --cached --quiet) {
-            Write-Host "Forever binary and manifest already current."
-          } else {
-            git commit -m "Publish approved Forever launcher graphics and blue D icon"
-            git push
-          }
+          $manifest.launcher.sha256 = $sha
+          $manifest | ConvertTo-Json -Depth 10 | Set-Content $manifestPath -Encoding utf8
+          git -C $releaseDir config user.name "DawnForge Forever Bot"
+          git -C $releaseDir config user.email "actions@users.noreply.github.com"
+          git -C $releaseDir add download/DawnForgeForeverLauncher.exe forever/update-manifest.json
+          $changed = @(git -C $releaseDir diff --cached --name-only)
+          $allowed = @("download/DawnForgeForeverLauncher.exe", "forever/update-manifest.json")
+          foreach ($f in $changed) { if ($f -notin $allowed) { throw "Unexpected staged file $f" } }
+          if ($changed.Count -eq 0) { Write-Host "Forever release already current"; exit 0 }
+          git -C $releaseDir commit -m "Publish Forever Play connector launcher 0.2.2"
+          if ($LASTEXITCODE -ne 0) { throw "Cannot commit release" }
+          git -C $releaseDir push origin HEAD:main
+          if ($LASTEXITCODE -ne 0) { throw "Cannot publish release to main" }
+          Write-Host "PUBLISHED Forever 0.2.2 SHA256 $sha"
