@@ -160,7 +160,7 @@ function Update-Launcher {
     $manifest=Get-Manifest
     $remote=$manifest.launcher
     if(-not $remote -or -not $remote.version -or -not $remote.url -or -not $remote.sha256){return $false}
-    $current=[Version]'0.2.1';$latest=[Version]([string]$remote.version)
+    $current=[Version]'0.2.2';$latest=[Version]([string]$remote.version)
     if($latest -le $current){return $false}
     $res=[System.Windows.MessageBox]::Show("A newer launcher ($latest) is available. Install verified update now?",'Launcher update',[System.Windows.MessageBoxButton]::YesNo,[System.Windows.MessageBoxImage]::Question)
     if($res -ne 'Yes'){return $true}
