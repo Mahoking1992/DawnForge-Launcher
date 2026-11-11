@@ -92,7 +92,7 @@ jobs:
           $sha = (Get-FileHash -LiteralPath $targetExe -Algorithm SHA256).Hash.ToLowerInvariant()
           $manifestPath = Join-Path $releaseDir "forever/update-manifest.json"
           $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
-          $manifest.launcher.version = "0.2.2"
+          $manifest.launcher.version = "0.2.3"
           $manifest.launcher.url = "https://raw.githubusercontent.com/Mahoking1992/DawnForge-Launcher/main/download/DawnForgeForeverLauncher.exe"
           $manifest.launcher.sha256 = $sha
           $manifest | ConvertTo-Json -Depth 10 | Set-Content $manifestPath -Encoding utf8
@@ -103,7 +103,7 @@ jobs:
           $allowed = @("download/DawnForgeForeverLauncher.exe", "forever/update-manifest.json")
           foreach ($f in $changed) { if ($f -notin $allowed) { throw "Unexpected staged file $f" } }
           if ($changed.Count -eq 0) { Write-Host "Forever release already current"; exit 0 }
-          git -C $releaseDir commit -m "Publish Forever Play connector launcher 0.2.2"
+          git -C $releaseDir commit -m "Publish Forever ZIP installer launcher 0.2.3"
           if ($LASTEXITCODE -ne 0) { throw "Cannot commit release" }
           git -C $releaseDir push origin HEAD:main
           if ($LASTEXITCODE -ne 0) { throw "Cannot publish release to main" }
