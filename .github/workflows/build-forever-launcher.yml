@@ -54,6 +54,11 @@ jobs:
           if ($text -match 'Gateway hostname.*TextBox|SECURE UPDATES  •') { throw "Old technical Options or footer text remains." }
           if ($text.Contains('Background="#F0081524"') -or $text.Contains('Background="#E9081524"')) { throw "Transparent status cards cause text overlap." }
           if (($text | Select-String -Pattern 'Background="#FF081524"' -AllMatches).Matches.Count -lt 2) { throw "Opaque status masks are missing." }
+      - name: Test ZIP install and path traversal with synthetic fixture
+        shell: pwsh
+        run: |
+          & ./forever/scripts/test-zip-installer.ps1
+          if ($LASTEXITCODE -ne 0) { throw "Synthetic ZIP installer tests failed" }
       - name: Embed blue D Windows executable icon
         shell: pwsh
         run: |
