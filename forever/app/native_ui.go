@@ -1,6 +1,6 @@
 //go:build windows
 
-// Native Win32 user interface; no PowerShell, cmd.exe or hidden scripts.
+// Native Win32 user interface; no external script hosts or hidden scripts.
 package main
 
 import (
