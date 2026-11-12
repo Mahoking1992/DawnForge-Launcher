@@ -59,6 +59,7 @@ var (
  deleteObject=gdi32.NewProc("DeleteObject")
  createFont=gdi32.NewProc("CreateFontW")
  selectObject=gdi32.NewProc("SelectObject")
+ copyDrawItem=kernel32.NewProc("RtlMoveMemory")
  getModule=kernel32.NewProc("GetModuleHandleW")
  loadCursor=user32.NewProc("LoadCursorW")
  browseFolderAPI=shell32.NewProc("SHBrowseForFolderW")
@@ -132,7 +133,8 @@ func drawScreen(w uintptr){
  drawLabel(dc,"YOUR GAME FOLDER",38,603,340,29,color(227,181,109),buttonFont,0)
 }
 func paintButton(data uintptr){
- info:=(*drawInfo)(unsafe.Pointer(data))
+ var info drawInfo
+ copyDrawItem.Call(uintptr(unsafe.Pointer(&info)),data,unsafe.Sizeof(info))
  bounds:=info.Bounds
  base:=color(25,54,82)
  if info.ControlID==playID{base=color(26,95,130)}
