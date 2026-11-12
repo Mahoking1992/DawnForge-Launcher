@@ -39,6 +39,18 @@ jobs:
           if ($actualIcon -ne $expectedIcon) { throw "Blue D icon archive is missing or changed." }
           Expand-Archive -LiteralPath forever/assets/blue-icon.zip -DestinationPath forever/app -Force
           if (-not (Test-Path forever/app/icon.ico)) { throw "Blue D icon is missing." }
+      - name: Verify pinned Nov-11 connector and certificate profile
+        shell: pwsh
+        run: |
+          $expected = "691cb9e017d47311839d4248d3a41265ef5bd1273b271987e429a23bd86b84f5"
+          $real = (Get-FileHash forever/app/forever-connector.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($real -ne $expected) { throw "Bundled Forever connector checksum mismatch." }
+          $published = (Get-Content forever/connector/SHA256SUMS -Raw).Split(' ')[0].Trim()
+          if ($published -ne $expected) { throw "Connector checksum file differs from approved hash." }
+          $profile = Get-Content forever/connector/profile.h -Raw
+          if ($profile -notmatch 'play.dawnforge.eu' -or $profile -notmatch 'DawnForge Forever') {
+            throw "Wrong Forever connector profile."
+          }
       - name: Validate native launcher source and compile
         shell: pwsh
         run: |
@@ -89,7 +101,7 @@ jobs:
         shell: pwsh
         run: |
           $manifest = Get-Content forever/update-manifest.json -Raw | ConvertFrom-Json
-          $manifest.launcher.version = "0.3.0"
+          $manifest.launcher.version = "0.3.1"
           $manifest.launcher.url = "https://raw.githubusercontent.com/Mahoking1992/DawnForge-Launcher/main/download/DawnForgeForeverLauncher.exe"
           $manifest.launcher.sha256 = (Get-FileHash download/DawnForgeForeverLauncher.exe -Algorithm SHA256).Hash.ToLowerInvariant()
           $manifest | ConvertTo-Json -Depth 10 | Set-Content forever/update-manifest.json -Encoding utf8
@@ -101,6 +113,8 @@ jobs:
           if (Test-Path $scanner) {
             & $scanner -Scan -ScanType 3 -File $exe -DisableRemediation
             if ($LASTEXITCODE -ne 0) { throw "Antivirus scan failed." }
+            & $scanner -Scan -ScanType 3 -File (Resolve-Path forever/app/forever-connector.exe).Path -DisableRemediation
+            if ($LASTEXITCODE -ne 0) { throw "Embedded Forever connector antivirus scan failed." }
           } else {
             Write-Host "::warning::Defender unavailable on runner; scan locally before release."
           }
