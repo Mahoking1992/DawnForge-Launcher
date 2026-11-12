@@ -20,15 +20,25 @@ import (
 type manifest struct {
  SchemaVersion int
  Launcher *launcherVersionInfo
+ ClientArchive *archiveSpec `json:"clientArchive"`
  Files []manifestFile
 }
 type launcherVersionInfo struct {Version,URL,SHA256 string}
 type manifestFile struct {Path,URL,SHA256 string; Size *int64}
+// The optional ZIP archive is supported for old deployment manifests.
+type archiveSpec struct {Type,URL,SHA256 string; Size *int64}
 
 const maxManifestSize=4<<20
 const maxGameFileSize=int64(80)<<30
 var checksumPattern=regexp.MustCompile("^[0-9a-fA-F]{64}$")
 var versionPattern=regexp.MustCompile("^[0-9]+(\\.[0-9]+){1,3}$")
+
+// Large 49GB client downloads must not be constrained by the 40-second
+// request timeout used for the small status and manifest API requests.
+var transferClient=&http.Client{
+ Transport:&http.Transport{Proxy:http.ProxyFromEnvironment, ResponseHeaderTimeout:25*time.Second, TLSHandshakeTimeout:15*time.Second, DisableCompression:true},
+ CheckRedirect:webClient.CheckRedirect,
+}
 
 func secureURL(raw string)bool{
  return strings.HasPrefix(raw,"https://")&&!strings.ContainsAny(raw,"\x00\r\n\t")
@@ -83,7 +93,8 @@ func downloadResponse(ctx context.Context,url string,offset int64)(*http.Respons
   req,err:=http.NewRequestWithContext(ctx,http.MethodGet,url,nil);if err!=nil{return nil,0,err}
   req.Header.Set("User-Agent","DawnForgeForeverLauncher/"+launcherVersion)
   if offset>0{req.Header.Set("Range",fmt.Sprintf("bytes=%d-",offset))}
-  response,err:=webClient.Do(req);if err!=nil{return nil,0,err}
+  req.Header.Set("Accept-Encoding","identity")
+  response,err:=transferClient.Do(req);if err!=nil{return nil,0,err}
   if offset>0{
    expectedPrefix:=fmt.Sprintf("bytes %d-",offset)
    if response.StatusCode!=http.StatusPartialContent||!strings.HasPrefix(response.Header.Get("Content-Range"),expectedPrefix){
@@ -142,13 +153,14 @@ func syncClientFiles()error{
  dir:=gameDir()
  if dir==""{return errors.New("Choose your existing Forever game folder first")}
  setStatus("Checking Forever game download manifest...")
- ctx,cancel:=context.WithTimeout(context.Background(),45*time.Minute)
+ ctx,cancel:=context.WithTimeout(context.Background(),24*time.Hour)
  defer cancel()
  m,err:=readManifest(ctx,clientManifestURL);if err!=nil{return err}
  if len(m.Files)>30000{return errors.New("Too many files in manifest")}
  if len(m.Files)==0{
+  if m.ClientArchive!=nil{return installClientArchive(ctx,dir,*m.ClientArchive)}
   setStatus("No downloadable game files currently published.")
-  showInfo("Forever game files are not yet published in the download manifest. Choose your existing legally acquired client in CHOOSE GAME FOLDER.")
+  showInfo("Forever client download is not currently published in the HTTPS manifest. Existing installations may be selected in CHOOSE GAME FOLDER.")
   return nil
  }
  marker:=filepath.Join(dir,".dawnforge-forever-download-pending")
@@ -159,7 +171,8 @@ func syncClientFiles()error{
   if err=verifiedDownload(ctx,item.URL,item.SHA256,target,maxGameFileSize,item.Size);err!=nil{return err}
  }
  if err=os.Remove(marker);err!=nil{return err}
- setStatus("All published client files verified.")
+ if !clientReady(dir){return errors.New("Downloaded manifest completed but _forever_\\Wow.exe or Data is missing; verify the published client manifest")}
+ setStatus("All published client files verified. PLAY is ready to test.")
  return nil
 }
 func compareVersions(a,b string)int{
