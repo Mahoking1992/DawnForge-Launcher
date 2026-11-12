@@ -72,6 +72,19 @@ jobs:
           Pop-Location
           if (-not (Test-Path download/DawnForgeForeverLauncher.exe)) { throw "Executable was not created." }
           Get-FileHash download/DawnForgeForeverLauncher.exe -Algorithm SHA256
+      - name: Smoke-test native Windows GUI
+        shell: pwsh
+        run: |
+          $exe = (Resolve-Path download/DawnForgeForeverLauncher.exe).Path
+          $proc = Start-Process -FilePath $exe -PassThru -ErrorAction Stop
+          try {
+            Start-Sleep -Seconds 5
+            $proc.Refresh()
+            if ($proc.HasExited) { throw "Native GUI exited immediately with code $($proc.ExitCode)." }
+            Write-Host "Native GUI remained active for 5 seconds."
+          } finally {
+            if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+          }
       - name: Set verified launcher update feed
         shell: pwsh
         run: |
