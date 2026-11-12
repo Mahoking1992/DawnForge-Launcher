@@ -128,7 +128,7 @@ func drawScreen(w uintptr){
  drawLabel(dc,"FOREVER",36,82,440,70,color(230,240,251),headlineFont,0)
  drawLabel(dc,"An independent world awaits.",38,165,420,30,color(181,201,225),buttonFont,0)
  drawLabel(dc,"Select your existing client and enter Azeroth.",38,208,442,30,color(181,201,225),buttonFont,0)
- drawLabel(dc,"NATIVE LAUNCHER   "+launcherVersion,38,247,442,30,color(216,185,125),buttonFont,0)
+ drawLabel(dc,"DOWNLOAD  /  PLAY    -    "+launcherVersion,38,247,442,30,color(216,185,125),buttonFont,0)
  drawLabel(dc,"REALM STATUS",38,513,260,28,color(227,181,109),buttonFont,0)
  drawLabel(dc,"YOUR GAME FOLDER",38,603,340,29,color(227,181,109),buttonFont,0)
 }
@@ -182,7 +182,15 @@ func nativeWndProc(w uintptr,code uint32,wp,lp uintptr)uintptr{
     }
    }
   case updatesID:runTask(checkLauncherUpdates)
-  case repairID:runTask(syncClientFiles)
+  case repairID:
+   if gameDir()==""{
+    showInfo("Choose a new empty Forever installation folder, or select your existing Forever client folder. Downloads go to the selected location, not to Vanilla.")
+    path:=openFolderDialog()
+    if path==""{return 0}
+    if err:=chooseGameDir(path);err!=nil{showWarning(err.Error());return 0}
+    setFolder(gameDir())
+   }
+   runTask(syncClientFiles)
   case playID:runTask(playGame)
   }
   return 0
@@ -197,7 +205,7 @@ func nativeWndProc(w uintptr,code uint32,wp,lp uintptr)uintptr{
 }
 func openFolderDialog()string{
  var name [260]uint16
- info:=browseInfo{Owner:windowHandle,DisplayName:&name[0],Title:utf16ptr("Choose the existing WoW Forever game folder"),Flags:1|0x40}
+ info:=browseInfo{Owner:windowHandle,DisplayName:&name[0],Title:utf16ptr("Choose an empty Forever folder or existing Forever client folder"),Flags:1|0x40}
  pidl,_,_:=browseFolderAPI.Call(uintptr(unsafe.Pointer(&info)))
  if pidl==0{return ""}
  defer coFree.Call(pidl)
