@@ -5,6 +5,10 @@ package main
 import (
  "context"
  _ "embed"
+ "crypto/sha256"
+ "encoding/hex"
+ "net"
+ "strconv"
  "encoding/json"
  "errors"
  "fmt"
@@ -21,9 +25,14 @@ import (
 
 //go:embed artwork.jpg
 var artwork []byte
+//go:embed forever-connector.exe
+var bundledConnector []byte
+
+const connectorSHA256="691cb9e017d47311839d4248d3a41265ef5bd1273b271987e429a23bd86b84f5"
+const gatewayHost="play.dawnforge.eu"
 
 const (
- launcherVersion="0.3.0"
+ launcherVersion="0.3.1"
  websiteURL="https://dawnforge.eu/forever"
  statusURL="https://dawnforge.eu/forever/api/status"
  updateManifestURL="https://raw.githubusercontent.com/Mahoking1992/DawnForge-Launcher/main/forever/update-manifest.json"
@@ -70,25 +79,47 @@ func clientReady(dir string)bool{
  if st,err:=os.Stat(filepath.Join(dir,"Data"));err!=nil||!st.IsDir(){return false}
  return true
 }
+// The binary is built from the pinned 2026-11-11 connector source and contains
+// the certificate-constrained Forever realm profile. Only the SHA-pinned bundled
+// connector is executed; arbitrary files from game directories are never run.
+func readyConnector()(string,error){
+ digest:=sha256.Sum256(bundledConnector)
+ if hex.EncodeToString(digest[:])!=connectorSHA256{return "",errors.New("Bundled connector integrity check failed")}
+ target:=filepath.Join(appFolder,"DawnForgeForeverConnector-"+connectorSHA256[:12]+".exe")
+ if existing,err:=fileSHA256(target);err==nil&&strings.EqualFold(existing,connectorSHA256){return target,nil}
+ if _,err:=os.Stat(target);err==nil{return "",errors.New("Existing connector file differs from the approved SHA-256; remove the invalid copy after checking it")}
+ temp,err:=os.CreateTemp(appFolder,".connector-*.tmp")
+ if err!=nil{return "",err}
+ name:=temp.Name()
+ defer os.Remove(name)
+ if _,err=temp.Write(bundledConnector);err!=nil{temp.Close();return "",err}
+ if err=temp.Close();err!=nil{return "",err}
+ if err=os.Rename(name,target);err!=nil{return "",err}
+ return target,nil
+}
+func gatewayReady()error{
+ for _,port:=range []int{1119,8081,8090}{
+  address:=net.JoinHostPort(gatewayHost,strconv.Itoa(port))
+  conn,err:=net.DialTimeout("tcp",address,4*time.Second)
+  if err!=nil{return fmt.Errorf("Forever gateway %s is unavailable: %w. Server routing must be fixed before PLAY",address,err)}
+  conn.Close()
+ }
+ return nil
+}
 func playGame()error{
  dir:=gameDir()
- if !clientReady(dir){return errors.New("Forever client not found. Select the folder containing _forever_\\Wow.exe and Data.")}
- paths:=[]string{
-  filepath.Join(appFolder,"DawnForgeForeverConnector.exe"),
-  filepath.Join(dir,"DawnForgeForeverConnector.exe"),
- }
- for _,connector:=range paths{
-  st,err:=os.Stat(connector)
-  if err==nil&&!st.IsDir(){
-   cmd:=exec.Command(connector)
-   cmd.Dir=filepath.Dir(connector)
-   if err:=cmd.Start();err!=nil{return err}
-   setStatus("Compatible Forever connector started.")
-   return nil
-  }
- }
- setStatus("Game client found; realm connector is not configured.")
- return errors.New("Your client was detected, but the Forever private-realm connection helper is not configured. Starting Wow.exe alone would not connect to this private realm. PLAY cannot connect yet.")
+ if !clientReady(dir){return errors.New("Forever client is not installed. Select a folder with _forever_\\Wow.exe and Data, or use DOWNLOAD / REPAIR.")}
+ setStatus("Checking Forever gateway ports 1119, 8081 and 8090...")
+ if err:=gatewayReady();err!=nil{return err}
+ target,err:=readyConnector();if err!=nil{return err}
+ setStatus("Starting verified Forever connector...")
+ // The connector may request UAC to install its constrained public CA
+ // and the one hosts entry for trinity.actual.battle.net.
+ cmd:=exec.Command(target,"--client",dir)
+ cmd.Dir=appFolder
+ if err=cmd.Start();err!=nil{return fmt.Errorf("Could not start Forever connector: %w",err)}
+ setStatus("Forever connector started. Login credentials belong inside the game.")
+ return nil
 }
 func runTask(action func()error){
  taskLock.Lock()
