@@ -1,30 +1,44 @@
-# DawnForge Forever Launcher (separate from Vanilla)
+# DawnForge Forever Launcher — native Windows build
 
-A dedicated **Windows launcher** for the independent DawnForge Forever realm. Its files live only under `forever/` and `download/DawnForgeForeverLauncher.exe`. The original Vanilla launcher and its publishing workflows are unchanged.
+This repository has **two independent launchers**. The native Forever code is strictly in `forever/`, and the Forever EXE is `download/DawnForgeForeverLauncher.exe`. Do not modify the Vanilla executable or its release workflow.
 
-## Features
-- English UI; large neutral Alliance/Horde illustration; opens [dawnforge.eu](https://dawnforge.eu/) rather than showing news.
-- No version number for the game client, no PlayerBots mention.
-- Options lets players choose their locally installed client folder. Realm server routes and update feeds are release-managed.
-- Manifest-driven HTTPS downloads from the Forever-only VPS manifest with SHA-256 verification, partial-download resume, and an automatic DOWNLOAD / PLAY label. Launcher self-update has a separate GitHub feed.
-- Select an **existing legitimately acquired** Forever client, or download client files from an authorized separately hosted VPS source when available. No game client files are hosted by this repository.
+## Native 0.3.0
 
-## Important connection prerequisite
-DawnForge Forever's latest verified backend listeners were bound to `127.0.0.1:1119`, `127.0.0.1:8081` and `127.0.0.1:8090` on its VPS. External access is **not yet verified**. WoW Forever cannot be redirected with a Vanilla-style realmlist change. It needs a compatible connection helper, a proper limited-scope public CA certificate and a secured public gateway. Never distribute the CA's private key.
+The Forever launcher now uses **native Win32 API controls implemented in Go**. It displays the existing approved Alliance/Horde `forever/app/artwork.jpg`. It does **not** extract or execute PowerShell, cmd, policy bypasses, or remote scripts.
 
-The game download manifest must be published at `https://dawnforge.eu/forever-client/manifest.json` before first-run downloads work. The separate connector also remains unconfigured.
+Features:
+- Windows GUI with original approved artwork, folder picker, live status, website link and PLAY.
+- Settings stored in `%LOCALAPPDATA%/DawnForgeForever/Launcher/settings.json` (game folder only).
+- Detects a preinstalled client with `_forever_/Wow.exe` and `Data/`.
+- DOWNLOAD / REPAIR reads a trusted HTTPS manifest from `https://dawnforge.eu/forever-client/manifest.json`, resumes downloads when supported, validates relative target paths, rejects symlink parents and SHA-256 mismatches.
+- CHECK UPDATES uses a separate HTTPS launcher manifest and saves verified new executables under the local `Updates` folder. It does not overwrite or run an executable while the launcher is active.
+- PLAY starts `DawnForgeForeverConnector.exe` only if present in the Forever application folder or selected game folder. **No Windows credential collection or game process injection is performed.**
 
-The [open-source Forever connector reference](https://github.com/MShkolenko/algalon-launcher) includes a Windows realm profile and signed-update design; its example cannot be used unchanged for our realm. The **Play** button intentionally refuses to launch until a compatible helper is configured. The GUI preview is not a claim of verified live game login.
+## What is not yet complete
 
-## Manifest format
-The file `forever/update-manifest.json` is the editable update feed. Use your own HTTPS links and SHA-256 digests before publishing a client patch:
-```json
-{
-  "schemaVersion": 1,
-  "launcher": null,
-  "files": [
-    {"path": "Data/example.patch", "url": "https://your-host/patch", "sha256": "<64-character sha256>"}
-  ]
-}
+The Forever login/private realm gateway and a compatible connector **have not been verified or packaged**. A client folder alone is insufficient to reach the private realm. Until that dependency is addressed, PLAY reports a clear error rather than pretending the game can connect or launching the official Battle.net session.
+
+The VPS-hosted game manifest may be empty or missing. A DOWNLOAD / REPAIR action will say so rather than offering unauthorized client files.
+
+**The Windows Defender Trojan detection on native 0.3.0 has not yet been independently checked.** A clean build is not an antivirus clearance or a functional connection test. Do not disable Microsoft Defender or instruct users to allow the older flagged EXE.
+
+## Build
+
+On a Windows runner with Go 1.23:
+
+```powershell
+cd forever/app
+go test ./...
+go vet ./...
+go build -trimpath -ldflags "-s -w -H windowsgui" -o ../../download/DawnForgeForeverLauncher.exe .
 ```
-Do not publish proprietary client binaries, private keys or credential material.
+
+The `.github/workflows/build-forever-launcher.yml` workflow also verifies the expected artwork and icon hash, compiles the exe, runs available Defender scanning, uploads the artifact, and publishes only when changes are merged to `main`. The prior PowerShell script is deleted from the native source branch.
+
+## Release checklist
+
+1. CI build, Go tests and static validation pass.
+2. Windows Defender locally scans the exact build; investigate any detection rather than suppressing warnings.
+3. Launch the EXE on a real Windows desktop, check original artwork, buttons, folder selection, reopen persistence and game manifest logic.
+4. Configure and verify the compatible realm connector and public gateway; perform an actual PLAY game login test before advertising the launcher as playable.
+5. Only after acceptance, merge and publish the new EXE; keep Vanilla separate.
