@@ -152,6 +152,7 @@ func verifiedDownload(ctx context.Context,url,sha,target string,maxBytes int64,e
 func syncClientFiles()error{
  dir:=gameDir()
  if dir==""{return errors.New("Choose your existing Forever game folder first")}
+ setProgress(0)
  setStatus("Checking Forever game download manifest...")
  ctx,cancel:=context.WithTimeout(context.Background(),24*time.Hour)
  defer cancel()
@@ -166,12 +167,14 @@ func syncClientFiles()error{
  marker:=filepath.Join(dir,".dawnforge-forever-download-pending")
  if err=os.WriteFile(marker,[]byte("Download or repair in progress"),0600);err!=nil{return err}
  for index,item:=range m.Files{
+  setProgress(index*100/len(m.Files))
   target,err:=safeFileTarget(dir,item.Path);if err!=nil{return err}
   setStatus(fmt.Sprintf("Checking / downloading %d of %d: %s",index+1,len(m.Files),item.Path))
   if err=verifiedDownload(ctx,item.URL,item.SHA256,target,maxGameFileSize,item.Size);err!=nil{return err}
  }
  if err=os.Remove(marker);err!=nil{return err}
  if !clientReady(dir){return errors.New("Downloaded manifest completed but _forever_\\Wow.exe or Data is missing; verify the published client manifest")}
+ setProgress(100)
  setStatus("All published client files verified. PLAY is ready to test.")
  return nil
 }
