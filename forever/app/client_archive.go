@@ -11,6 +11,7 @@ import (
  "os"
  "path/filepath"
  "strings"
+ "time"
 )
 
 // ZIP fallback preserves the old 2026-11-11 one-click installer behavior.
@@ -25,7 +26,27 @@ func installClientArchive(ctx context.Context,dir string,info archiveSpec)error{
  if err=os.MkdirAll(cache,0700);err!=nil{return err}
  archivePath:=filepath.Join(cache,"DawnForgeForeverClient.zip")
  setStatus("Downloading Forever ZIP archive from HTTPS server...")
- if err=verifiedDownload(ctx,info.URL,info.SHA256,archivePath,100<<30,info.Size);err!=nil{return err}
+ start:=time.Now()
+ last:=time.Time{}
+ var transferred int64
+ var displayProgress=func(size,delta int64){
+  if delta>0{transferred+=delta}
+  now:=time.Now()
+  if !last.IsZero()&&now.Sub(last)<250*time.Millisecond{return}
+  last=now
+  seconds:=now.Sub(start).Seconds()
+  mbps:=0.0
+  if seconds>0{mbps=float64(transferred)/seconds/float64(1<<20)}
+  if info.Size!=nil&&*info.Size>0{
+   setProgress(int(float64(size)*100/float64(*info.Size)))
+   setDownloadDetails(fmt.Sprintf("ZIP: %s / %s | Prenesené: %s | %.1f MB/s",downloadByteLabel(size),downloadByteLabel(*info.Size),downloadByteLabel(transferred),mbps))
+  }else{
+   setDownloadDetails(fmt.Sprintf("ZIP: %s | %.1f MB/s",downloadByteLabel(size),mbps))
+  }
+ }
+ if err=verifiedDownloadWithProgress(ctx,info.URL,info.SHA256,archivePath,100<<30,info.Size,displayProgress);err!=nil{return err}
+ displayProgress(func()int64{st,err:=os.Stat(archivePath);if err!=nil{return 0};return st.Size()}(),0)
+ setProgress(100)
  stage:=dir+".dfstage"
  if _,err=os.Stat(stage);err==nil{return errors.New("Previous staging folder exists; inspect it before retrying: "+stage)}
  if err=os.Mkdir(stage,0700);err!=nil{return err}
