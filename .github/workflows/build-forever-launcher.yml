@@ -39,20 +39,28 @@ jobs:
           if ($actualIcon -ne $expectedIcon) { throw "Blue D icon archive is missing or changed." }
           Expand-Archive -LiteralPath forever/assets/blue-icon.zip -DestinationPath forever/app -Force
           if (-not (Test-Path forever/app/icon.ico)) { throw "Blue D icon is missing." }
-      - name: Validate PowerShell launcher source
+      - name: Verify pinned Nov-11 connector and certificate profile
         shell: pwsh
         run: |
-          $text = Get-Content forever/app/launcher.ps1 -Raw
-          $tokens = $null
-          $errors = $null
-          [System.Management.Automation.Language.Parser]::ParseInput($text,[ref]$tokens,[ref]$errors)|Out-Null
-          if ($errors.Count -gt 0) {
-            $errors | Format-List | Out-String | Write-Host
-            exit 1
+          $expected = "691cb9e017d47311839d4248d3a41265ef5bd1273b271987e429a23bd86b84f5"
+          $real = (Get-FileHash forever/app/forever-connector.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($real -ne $expected) { throw "Bundled Forever connector checksum mismatch." }
+          $published = (Get-Content forever/connector/SHA256SUMS -Raw).Split(' ')[0].Trim()
+          if ($published -ne $expected) { throw "Connector checksum file differs from approved hash." }
+          $profile = Get-Content forever/connector/profile.h -Raw
+          if ($profile -notmatch 'play.dawnforge.eu' -or $profile -notmatch 'DawnForge Forever') {
+            throw "Wrong Forever connector profile."
           }
-          if ($text -match 'Gateway hostname.*TextBox|SECURE UPDATES  •') { throw "Old technical Options or footer text remains." }
-          if ($text.Contains('Background="#F0081524"') -or $text.Contains('Background="#E9081524"')) { throw "Transparent status cards cause text overlap." }
-          if (($text | Select-String -Pattern 'Background="#FF081524"' -AllMatches).Matches.Count -lt 2) { throw "Opaque status masks are missing." }
+      - name: Validate native launcher source and compile
+        shell: pwsh
+        run: |
+          if (Select-String -Path forever/app/*.go -Pattern 'powershell.exe','-ExecutionPolicy','cmd.exe' -SimpleMatch) { throw "Script host call forbidden." }
+          Push-Location forever/app
+          go test ./...
+          if ($LASTEXITCODE -ne 0) { throw "Go test failed." }
+          go vet ./...
+          if ($LASTEXITCODE -ne 0) { throw "Go vet failed." }
+          Pop-Location
       - name: Embed blue D Windows executable icon
         shell: pwsh
         run: |
@@ -76,14 +84,40 @@ jobs:
           Pop-Location
           if (-not (Test-Path download/DawnForgeForeverLauncher.exe)) { throw "Executable was not created." }
           Get-FileHash download/DawnForgeForeverLauncher.exe -Algorithm SHA256
+      - name: Smoke-test native Windows GUI
+        shell: pwsh
+        run: |
+          $exe = (Resolve-Path download/DawnForgeForeverLauncher.exe).Path
+          $proc = Start-Process -FilePath $exe -PassThru -ErrorAction Stop
+          try {
+            Start-Sleep -Seconds 5
+            $proc.Refresh()
+            if ($proc.HasExited) { throw "Native GUI exited immediately with code $($proc.ExitCode)." }
+            Write-Host "Native GUI remained active for 5 seconds."
+          } finally {
+            if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+          }
       - name: Set verified launcher update feed
         shell: pwsh
         run: |
           $manifest = Get-Content forever/update-manifest.json -Raw | ConvertFrom-Json
-          $manifest.launcher.version = "0.2.4"
+          $manifest.launcher.version = "0.3.4"
           $manifest.launcher.url = "https://raw.githubusercontent.com/Mahoking1992/DawnForge-Launcher/main/download/DawnForgeForeverLauncher.exe"
           $manifest.launcher.sha256 = (Get-FileHash download/DawnForgeForeverLauncher.exe -Algorithm SHA256).Hash.ToLowerInvariant()
           $manifest | ConvertTo-Json -Depth 10 | Set-Content forever/update-manifest.json -Encoding utf8
+      - name: Scan native build with Windows Defender when available
+        shell: pwsh
+        run: |
+          $exe = (Resolve-Path download/DawnForgeForeverLauncher.exe).Path
+          $scanner = Join-Path $env:ProgramFiles "Windows Defender/MpCmdRun.exe"
+          if (Test-Path $scanner) {
+            & $scanner -Scan -ScanType 3 -File $exe -DisableRemediation
+            if ($LASTEXITCODE -ne 0) { throw "Antivirus scan failed." }
+            & $scanner -Scan -ScanType 3 -File (Resolve-Path forever/app/forever-connector.exe).Path -DisableRemediation
+            if ($LASTEXITCODE -ne 0) { throw "Embedded Forever connector antivirus scan failed." }
+          } else {
+            Write-Host "::warning::Defender unavailable on runner; scan locally before release."
+          }
       - name: Upload downloadable build
         uses: actions/upload-artifact@v4
         with:
@@ -99,6 +133,6 @@ jobs:
           if (git diff --cached --quiet) {
             Write-Host "Forever binary and manifest already current."
           } else {
-            git commit -m "Publish approved Forever launcher graphics and blue D icon"
+            git commit -m "Publish verified native Forever launcher"
             git push
           }
