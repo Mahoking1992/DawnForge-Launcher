@@ -101,6 +101,7 @@ var (
  uiFolder="No Forever game folder selected."
  uiRealm="Checking Forever realm status..."
  uiProgress=-1
+ uiDownloadDetails=""
 )
 func utf16ptr(s string)*uint16{return syscall.StringToUTF16Ptr(s)}
 func strPtr(s string)uintptr{return uintptr(unsafe.Pointer(utf16ptr(s)))}
@@ -111,6 +112,7 @@ func setStatus(s string){uiMu.Lock();uiStatus=s;uiMu.Unlock();refreshUI()}
 func setFolder(s string){uiMu.Lock();uiFolder=s;uiMu.Unlock();refreshUI()}
 func setRealm(s string){uiMu.Lock();uiRealm=s;uiMu.Unlock();refreshUI()}
 func setProgress(i int){uiMu.Lock();uiProgress=i;uiMu.Unlock();refreshUI()}
+func setDownloadDetails(s string){uiMu.Lock();uiDownloadDetails=s;uiMu.Unlock();refreshUI()}
 func showWarning(s string){messageBox.Call(windowHandle,strPtr(s),strPtr("DawnForge Forever"),0x30)}
 func showInfo(s string){messageBox.Call(windowHandle,strPtr(s),strPtr("DawnForge Forever"),0x40)}
 
@@ -202,17 +204,18 @@ func drawScreen(w uintptr){
  }
  // The complete approved artwork is visible. Only the same lower-left status
  // area used by the original WPF UI is overlaid, with dynamic download progress.
- panelCanvas(dc,v,35,765,995,150)
+ panelCanvas(dc,v,35,765,995,152)
  uiMu.RLock()
- status,folder,realm,progress:=uiStatus,uiFolder,uiRealm,uiProgress
+ status,folder,realm,progress,details:=uiStatus,uiFolder,uiRealm,uiProgress,uiDownloadDetails
  uiMu.RUnlock()
  textCanvas(dc,v,realm,58,780,940,31,21,true,color(231,195,128))
  textCanvas(dc,v,folder,58,811,940,28,19,false,color(218,232,243))
- textCanvas(dc,v,status,58,841,940,35,20,false,color(238,220,181))
+ textCanvas(dc,v,status,58,839,940,29,19,false,color(238,220,181))
+ if details!=""{textCanvas(dc,v,details,58,870,940,27,18,true,color(166,225,189))}
  if progress>=0{
-  fillCanvas(dc,v,58,887,940,12,color(23,47,69))
+  fillCanvas(dc,v,58,904,940,9,color(23,47,69))
   if progress>100{progress=100}
-  if progress>0{fillCanvas(dc,v,58,887,int32(progress)*940/100,12,color(63,194,106))}
+  if progress>0{fillCanvas(dc,v,58,904,int32(progress)*940/100,9,color(63,194,106))}
  }
 }
 func pickFolder(){
