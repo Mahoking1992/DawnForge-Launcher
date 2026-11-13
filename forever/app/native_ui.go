@@ -71,6 +71,10 @@ var (
  beginPaint=user32.NewProc("BeginPaint")
  endPaint=user32.NewProc("EndPaint")
  fillRect=user32.NewProc("FillRect")
+ createCompatibleDC=gdi32.NewProc("CreateCompatibleDC")
+ createCompatibleBitmap=gdi32.NewProc("CreateCompatibleBitmap")
+ deleteDC=gdi32.NewProc("DeleteDC")
+ bitBlt=gdi32.NewProc("BitBlt")
  drawTextAPI=user32.NewProc("DrawTextW")
  setBkMode=gdi32.NewProc("SetBkMode")
  setTextColor=gdi32.NewProc("SetTextColor")
@@ -187,10 +191,25 @@ func panelCanvas(dc uintptr,v viewport,x,y,w,h int32){
 }
 func drawScreen(w uintptr){
  var ps winPaint
- dc,_,_:=beginPaint.Call(w,uintptr(unsafe.Pointer(&ps)))
+ screenDC,_,_:=beginPaint.Call(w,uintptr(unsafe.Pointer(&ps)))
  defer endPaint.Call(w,uintptr(unsafe.Pointer(&ps)))
  var client winRect
  getClientRect.Call(w,uintptr(unsafe.Pointer(&client)))
+ width,height:=client.Right-client.Left,client.Bottom-client.Top
+ if width<=0||height<=0{return}
+
+ // Paint the entire frame into an offscreen GDI bitmap, then present
+ // it with one BitBlt. Never expose the background-cleared frame.
+ dc,_,_:=createCompatibleDC.Call(screenDC)
+ if dc==0{return}
+ defer deleteDC.Call(dc)
+ frame,_,_:=createCompatibleBitmap.Call(screenDC,uintptr(width),uintptr(height))
+ if frame==0{return}
+ previous,_,_:=selectObject.Call(dc,frame)
+ defer func(){
+  selectObject.Call(dc,previous)
+  deleteObject.Call(frame)
+ }()
  bg:=makeBrush(color(5,13,27))
  fillRect.Call(dc,uintptr(unsafe.Pointer(&client)),bg)
  deleteObject.Call(bg)
@@ -217,6 +236,8 @@ func drawScreen(w uintptr){
   if progress>100{progress=100}
   if progress>0{fillCanvas(dc,v,58,904,int32(progress)*940/100,9,color(63,194,106))}
  }
+ // SRCCOPY: the entire completed frame appears in one operation.
+ bitBlt.Call(screenDC,0,0,uintptr(width),uintptr(height),dc,0,0,0x00CC0020)
 }
 func pickFolder(){
  path:=openFolderDialog()
