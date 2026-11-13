@@ -82,3 +82,41 @@ func TestSafeZipExtraction(t *testing.T){
   if _,err:=os.Stat(filepath.Join(root,"outside.exe"));err==nil{t.Fatal("Outside file was written")}
  })
 }
+
+func TestOriginalFullArtworkGeometry(t *testing.T){
+ if v:=artworkViewport(1229,819);v.W<1220||v.H<815{
+  t.Fatalf("Original artwork would be cropped: %+v",v)
+ }
+ if v:=artworkViewport(1920,1080);v.W!=1620||v.X!=150||v.H!=1080{
+  t.Fatalf("Ultrawide monitor should letterbox, not stretch: %+v",v)
+ }
+}
+func TestOriginalArtworkHotspots(t *testing.T){
+ cases:=[]struct{label string;x,y int32;want int}{
+  {"home",110,440,cmdHome},
+  {"website",420,450,cmdWebsite},
+  {"downloads",700,450,cmdDownloads},
+  {"updates",990,450,cmdUpdates},
+  {"options",1350,450,cmdOptions},
+  {"play",1270,825,cmdPlay},
+  {"close",1510,21,cmdClose},
+  {"minimize",1380,21,cmdMinimize},
+  {"maximize",1448,21,cmdMaximize},
+  {"not a button",200,610,0},
+ }
+ for _,c:=range cases{
+  if got:=hitArtwork(c.x,c.y);got!=c.want{
+   t.Errorf("%s at (%d,%d): got %d want %d",c.label,c.x,c.y,got,c.want)
+  }
+ }
+}
+func TestArtworkClickCoordinateMapping(t *testing.T){
+ v:=artworkViewport(1229,819)
+ // The entire scene, not only the old right-hand crop, must respond.
+ x:=v.X+int32(int64(750)*int64(v.W)/int64(canvasWidth))
+ y:=v.Y+int32(int64(460)*int64(v.H)/int64(canvasHeight))
+ ax,ay,ok:=artPoint(x,y,v)
+ if !ok||hitArtwork(ax,ay)!=cmdDownloads{
+  t.Fatalf("Graphical DOWNLOAD button not clickable: (%d,%d) ok=%v",ax,ay,ok)
+ }
+}
