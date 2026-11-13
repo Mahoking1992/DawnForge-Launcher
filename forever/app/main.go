@@ -32,7 +32,7 @@ const connectorSHA256="691cb9e017d47311839d4248d3a41265ef5bd1273b271987e429a23bd
 const gatewayHost="play.dawnforge.eu"
 
 const (
- launcherVersion="0.3.3"
+ launcherVersion="0.3.4"
  websiteURL="https://dawnforge.eu/forever"
  statusURL="https://dawnforge.eu/forever/api/status"
  updateManifestURL="https://raw.githubusercontent.com/Mahoking1992/DawnForge-Launcher/main/forever/update-manifest.json"
