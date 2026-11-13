@@ -6,6 +6,7 @@ import (
  "os"
  "path/filepath"
  "archive/zip"
+ "bytes"
  "crypto/sha256"
  "encoding/hex"
  "strings"
@@ -118,5 +119,28 @@ func TestArtworkClickCoordinateMapping(t *testing.T){
  ax,ay,ok:=artPoint(x,y,v)
  if !ok||hitArtwork(ax,ay)!=cmdDownloads{
   t.Fatalf("Graphical DOWNLOAD button not clickable: (%d,%d) ok=%v",ax,ay,ok)
+ }
+}
+
+func TestDownloadByteLabels(t *testing.T){
+ for _,c:=range []struct{bytes int64;want string}{
+  {1<<20,"1.0 MB"},
+  {512<<20,"512.0 MB"},
+  {2<<30,"2.00 GB"},
+  {int64(49.6*float64(1<<30)),"49.60 GB"},
+ }{
+  if got:=downloadByteLabel(c.bytes);got!=c.want{
+   t.Errorf("%d bytes -> %q want %q",c.bytes,got,c.want)
+  }
+ }
+}
+func TestProgressWriterCountsActualBytes(t *testing.T){
+ var out bytes.Buffer
+ var position,network int64
+ writer:=&progressWriter{dst:&out,position:8,report:func(pos,delta int64){position=pos;network+=delta}}
+ if n,err:=writer.Write([]byte("four"));err!=nil||n!=4{t.Fatal("Write failed",n,err)}
+ if n,err:=writer.Write([]byte("more"));err!=nil||n!=4{t.Fatal("Second write failed",n,err)}
+ if position!=16||network!=8||out.String()!="fourmore"{
+  t.Errorf("Bad transferred-byte accounting: pos=%d delta=%d body=%q",position,network,out.String())
  }
 }
