@@ -9,7 +9,6 @@ import (
  "crypto/sha256"
  "os"
  "path/filepath"
- "strings"
  "sync"
  "syscall"
  "unsafe"
