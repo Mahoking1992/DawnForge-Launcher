@@ -109,11 +109,35 @@ func downloadResponse(ctx context.Context,url string,offset int64)(*http.Respons
  }
  return nil,0,errors.New("Failed to resume download")
 }
+// verifiedDownload retains the existing update/ZIP callers unchanged.
 func verifiedDownload(ctx context.Context,url,sha,target string,maxBytes int64,expected *int64)error{
+ return verifiedDownloadWithProgress(ctx,url,sha,target,maxBytes,expected,nil)
+}
+// The callback reports bytes already valid/resumed within the current file,
+// plus newly transferred network bytes. The UI never guesses a file size.
+type progressWriter struct {
+ dst io.Writer
+ position int64
+ report func(int64,int64)
+}
+func (p *progressWriter)Write(chunk []byte)(int,error){
+ n,err:=p.dst.Write(chunk)
+ if n>0 {
+  p.position+=int64(n)
+  if p.report!=nil{p.report(p.position,int64(n))}
+ }
+ return n,err
+}
+func verifiedDownloadWithProgress(ctx context.Context,url,sha,target string,maxBytes int64,expected *int64,report func(int64,int64))error{
  if !secureURL(url){return errors.New("File URL must use HTTPS")}
  if !checksumPattern.MatchString(sha){return errors.New("Invalid SHA-256 in manifest")}
  if expected!=nil&&(*expected<0||*expected>maxBytes){return errors.New("Invalid expected file size")}
- if existing,err:=fileSHA256(target);err==nil&&strings.EqualFold(existing,sha){return nil}
+ if existing,err:=fileSHA256(target);err==nil&&strings.EqualFold(existing,sha){
+  if report!=nil {
+   if st,err:=os.Stat(target);err==nil{report(st.Size(),0)}
+  }
+  return nil
+ }
  if err:=os.MkdirAll(filepath.Dir(target),0700);err!=nil{return err}
  part:=target+".dfpart"
  offset:=int64(0)
@@ -123,11 +147,13 @@ func verifiedDownload(ctx context.Context,url,sha,target string,maxBytes int64,e
  if err!=nil{return err}
  defer response.Body.Close()
  if realOffset==0{os.Remove(part)}
+ if realOffset>0&&report!=nil{report(realOffset,0)}
  if response.ContentLength>=0&&response.ContentLength+realOffset>maxBytes{return errors.New("File is too large")}
  flags:=os.O_WRONLY|os.O_CREATE
  if realOffset==0{flags|=os.O_TRUNC}else{flags|=os.O_APPEND}
  out,err:=os.OpenFile(part,flags,0600);if err!=nil{return err}
- n,copyErr:=io.Copy(out,io.LimitReader(response.Body,maxBytes-realOffset+1))
+ output:=&progressWriter{dst:out,position:realOffset,report:report}
+ n,copyErr:=io.CopyBuffer(output,io.LimitReader(response.Body,maxBytes-realOffset+1),make([]byte,256<<10))
  closeErr:=out.Close()
  if copyErr!=nil{return copyErr}
  if closeErr!=nil{return closeErr}
@@ -149,10 +175,18 @@ func verifiedDownload(ctx context.Context,url,sha,target string,maxBytes int64,e
  if oldExists{os.Remove(backup)}
  return nil
 }
+// downloadByteLabel displays MB for small transfers and GB for full clients.
+func downloadByteLabel(n int64)string{
+ if n<0{n=0}
+ if n<1<<20{return fmt.Sprintf("%.1f KB",float64(n)/1024)}
+ if n<1<<30{return fmt.Sprintf("%.1f MB",float64(n)/float64(1<<20))}
+ return fmt.Sprintf("%.2f GB",float64(n)/float64(1<<30))
+}
 func syncClientFiles()error{
  dir:=gameDir()
- if dir==""{return errors.New("Choose your existing Forever game folder first")}
+ if dir==""{return errors.New("Choose your Forever game folder first")}
  setProgress(0)
+ setDownloadDetails("Loading download manifest...")
  setStatus("Checking Forever game download manifest...")
  ctx,cancel:=context.WithTimeout(context.Background(),24*time.Hour)
  defer cancel()
@@ -160,22 +194,67 @@ func syncClientFiles()error{
  if len(m.Files)>30000{return errors.New("Too many files in manifest")}
  if len(m.Files)==0{
   if m.ClientArchive!=nil{return installClientArchive(ctx,dir,*m.ClientArchive)}
+  setDownloadDetails("No client downloads are published.")
   setStatus("No downloadable game files currently published.")
-  showInfo("Forever client download is not currently published in the HTTPS manifest. Existing installations may be selected in CHOOSE GAME FOLDER.")
+  showInfo("Forever client download is not currently published in the HTTPS manifest. Existing installations may be selected in Options.")
   return nil
+ }
+ var totalBytes int64
+ allSizesKnown:=true
+ for _,file:=range m.Files{
+  if file.Size==nil||*file.Size<0||*file.Size>maxGameFileSize{
+   allSizesKnown=false
+  }else if totalBytes<=int64(^uint64(0)>>1)-*file.Size{
+   totalBytes+=*file.Size
+  }else{allSizesKnown=false}
+ }
+ var verifiedDone,transferred int64
+ started:=time.Now()
+ lastRefresh:=time.Time{}
+ display:=func(current int64,final bool){
+  now:=time.Now()
+  if !final&&!lastRefresh.IsZero()&&now.Sub(lastRefresh)<250*time.Millisecond{return}
+  lastRefresh=now
+  overall:=verifiedDone+current
+  if allSizesKnown&&totalBytes>0{
+   if overall>totalBytes{overall=totalBytes}
+   setProgress(int(float64(overall)*100/float64(totalBytes)))
+  }
+  elapsed:=now.Sub(started).Seconds()
+  speed:=0.0
+  if elapsed>0{speed=float64(transferred)/elapsed/float64(1<<20)}
+  if allSizesKnown&&totalBytes>0{
+   setDownloadDetails(fmt.Sprintf("Overené: %s / %s | Prenesené: %s | %.1f MB/s",
+    downloadByteLabel(overall),downloadByteLabel(totalBytes),downloadByteLabel(transferred),speed))
+  }else{
+   setDownloadDetails(fmt.Sprintf("Overené: %s | Prenesené: %s | %.1f MB/s",
+    downloadByteLabel(overall),downloadByteLabel(transferred),speed))
+  }
  }
  marker:=filepath.Join(dir,".dawnforge-forever-download-pending")
  if err=os.WriteFile(marker,[]byte("Download or repair in progress"),0600);err!=nil{return err}
  for index,item:=range m.Files{
-  setProgress(index*100/len(m.Files))
   target,err:=safeFileTarget(dir,item.Path);if err!=nil{return err}
   setStatus(fmt.Sprintf("Checking / downloading %d of %d: %s",index+1,len(m.Files),item.Path))
-  if err=verifiedDownload(ctx,item.URL,item.SHA256,target,maxGameFileSize,item.Size);err!=nil{return err}
+  var fileProgress int64
+  report:=func(fileBytes,networkDelta int64){
+   if fileBytes<0{fileBytes=0}
+   fileProgress=fileBytes
+   if networkDelta>0{transferred+=networkDelta}
+   display(fileProgress,false)
+  }
+  if err=verifiedDownloadWithProgress(ctx,item.URL,item.SHA256,target,maxGameFileSize,item.Size,report);err!=nil{
+   display(fileProgress,true)
+   return err
+  }
+  if st,err:=os.Stat(target);err==nil{verifiedDone+=st.Size()}
+  display(0,true)
  }
  if err=os.Remove(marker);err!=nil{return err}
  if !clientReady(dir){return errors.New("Downloaded manifest completed but _forever_\\Wow.exe or Data is missing; verify the published client manifest")}
- setProgress(100)
- setStatus("All published client files verified. PLAY is ready to test.")
+ if allSizesKnown{setProgress(100)}
+ display(0,true)
+ setStatus("All client files verified. PLAY is ready to test.")
  return nil
 }
 func compareVersions(a,b string)int{
