@@ -20,6 +20,7 @@ const (
  wmDestroy=2; wmPaint=15; wmClose=16; wmEraseBkgnd=20
  wmLButtonDown=0x0201; wmLButtonUp=0x0202; wmMouseMove=0x0200
  wmNCLButtonDown=0x00A1; htCaption=2
+ wmTimer=0x0113; statusTimerID=1
  wsPopup=0x80000000; wsVisible=0x10000000
  dtCenter=1; dtVCenter=4; dtSingleLine=32; dtEndEllipsis=0x8000
  bkTransparent=1
@@ -64,6 +65,8 @@ var (
  postQuit=user32.NewProc("PostQuitMessage")
  sendMessage=user32.NewProc("SendMessageW")
  invalidateRect=user32.NewProc("InvalidateRect")
+ setTimer=user32.NewProc("SetTimer")
+ killTimer=user32.NewProc("KillTimer")
  releaseCapture=user32.NewProc("ReleaseCapture")
  getClientRect=user32.NewProc("GetClientRect")
  systemParameters=user32.NewProc("SystemParametersInfoW")
@@ -282,6 +285,9 @@ func handleClick(id int){
 func nativeWndProc(w uintptr,code uint32,wp,lp uintptr)uintptr{
  switch code{
  case wmEraseBkgnd:return 1
+ case wmTimer:
+  if wp==statusTimerID{go refreshStatus()}
+  return 0
  case wmPaint:drawScreen(w);return 0
  case wmLButtonUp:
   handleClick(clickAt(w,lp))
@@ -304,6 +310,7 @@ func nativeWndProc(w uintptr,code uint32,wp,lp uintptr)uintptr{
   setCursor.Call(c)
   return 0
  case wmDestroy:
+  killTimer.Call(w,statusTimerID)
   if artHandle!=0{gdipDispose.Call(artHandle)}
   if gdipToken!=0{gdipShutdown.Call(gdipToken)}
   postQuit.Call(0)
@@ -357,6 +364,7 @@ func startWindow(){
   wsPopup|wsVisible,uintptr(x),uintptr(y),uintptr(width),uintptr(height),0,0,instance,0)
  if hwnd==0{return}
  windowHandle=hwnd
+ setTimer.Call(hwnd,statusTimerID,30000,0)
  showWindow.Call(hwnd,1)
  updateWindow.Call(hwnd)
  if cfg.GameDir!=""{setFolder("Game folder: "+cfg.GameDir)}
