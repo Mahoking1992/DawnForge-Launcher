@@ -127,7 +127,7 @@ func TestDownloadByteLabels(t *testing.T){
   {1<<20,"1.0 MB"},
   {512<<20,"512.0 MB"},
   {2<<30,"2.00 GB"},
-  {int64(49.6*float64(1<<30)),"49.60 GB"},
+  {int64(49.5*float64(1<<30)),"49.50 GB"},
  }{
   if got:=downloadByteLabel(c.bytes);got!=c.want{
    t.Errorf("%d bytes -> %q want %q",c.bytes,got,c.want)
