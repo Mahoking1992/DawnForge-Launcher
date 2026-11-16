@@ -11,8 +11,11 @@ call "%VS%\VC\Auxiliary\Build\vcvars64.bat" >nul || exit /b 1
 cl /nologo /utf-8 /std:c++17 /EHsc /DUNICODE /D_UNICODE /I . test_hosts.cpp /Fe:test_hosts.exe /link /SUBSYSTEM:CONSOLE shell32.lib ole32.lib user32.lib crypt32.lib ws2_32.lib advapi32.lib credui.lib bcrypt.lib winhttp.lib comctl32.lib gdi32.lib || exit /b 1
 cl /nologo /utf-8 /std:c++17 /EHsc /DUNICODE /D_UNICODE /I . test_updater.cpp /Fe:test_updater.exe /link /SUBSYSTEM:CONSOLE shell32.lib ole32.lib user32.lib crypt32.lib ws2_32.lib advapi32.lib credui.lib bcrypt.lib winhttp.lib comctl32.lib gdi32.lib || exit /b 1
 cl /nologo /utf-8 /std:c++17 /EHsc /DUNICODE /D_UNICODE test_saved_login.cpp /Fe:test_saved_login.exe /link /SUBSYSTEM:CONSOLE advapi32.lib || exit /b 1
-del /q test_hosts.obj test_updater.obj test_saved_login.obj 2>nul
+cl /nologo /utf-8 /std:c++17 /EHsc /DUNICODE /D_UNICODE /I . test_client_copy.cpp /Fe:test_client_copy.exe /link /SUBSYSTEM:CONSOLE shell32.lib ole32.lib user32.lib crypt32.lib ws2_32.lib advapi32.lib credui.lib bcrypt.lib winhttp.lib comctl32.lib gdi32.lib || exit /b 1
+del /q test_hosts.obj test_updater.obj test_saved_login.obj test_client_copy.obj 2>nul
 "%~dp0test_hosts.exe" || exit /b 1
 "%~dp0test_updater.exe"
 if errorlevel 1 exit /b 1
 "%~dp0test_saved_login.exe"
+if errorlevel 1 exit /b 1
+"%~dp0test_client_copy.exe"
