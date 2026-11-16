@@ -10,7 +10,7 @@ on:
       - ".github/workflows/build-forever-launcher.yml"
 
   pull_request:
-    branches: [main]
+    branches: [main, feat/forever-complete-native-download-play]
     paths:
       - "forever/**"
       - ".github/workflows/build-forever-launcher.yml"
@@ -61,6 +61,16 @@ jobs:
           go vet ./...
           if ($LASTEXITCODE -ne 0) { throw "Go vet failed." }
           Pop-Location
+      - name: Regression-test player addons in Forever private-client copies
+        shell: cmd
+        run: |
+          set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+          if not exist "%VSWHERE%" exit /b 1
+          for /f "usebackq delims=" %%i in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VS=%%i"
+          if not defined VS exit /b 1
+          call "%VS%\VC\Auxiliary\Build\vcvars64.bat" >nul || exit /b 1
+          cl /nologo /utf-8 /std:c++17 /EHsc /DUNICODE /D_UNICODE /I forever\connector forever\connector\test_client_copy.cpp /Fe:forever\connector\test_client_copy.exe /link /SUBSYSTEM:CONSOLE shell32.lib ole32.lib user32.lib crypt32.lib ws2_32.lib advapi32.lib credui.lib bcrypt.lib winhttp.lib comctl32.lib gdi32.lib || exit /b 1
+          forever\connector\test_client_copy.exe || exit /b 1
       - name: Embed blue D Windows executable icon
         shell: pwsh
         run: |
