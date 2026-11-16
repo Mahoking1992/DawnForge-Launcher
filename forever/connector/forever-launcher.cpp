@@ -820,6 +820,9 @@ static bool manifest(const wstr& dir, const wstr& rel, bool top, std::vector<wst
     for (const auto& fd : items) {
         if (top && skipped_top(fd.cFileName)) continue;
         wstr r = rel.empty() ? wstr(fd.cFileName) : rel + L"\\" + fd.cFileName;
+        // Player-managed AddOns do not belong to the official-client fingerprint.
+        // Otherwise an installed addon makes PLAY rebuild and erase the whole private copy.
+        if (lower(r) == L"interface\\addons") continue;
         if (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) return false;  // a link in the client folder: refuse
         if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
             if (runtime_file(lower(r) + L"\\")) continue;
@@ -1042,6 +1045,17 @@ static wstr prepare_own_client(const wstr& root, const wstr& product, const wstr
     if (ok && is_dir(own + L"\\WTF")) ok = copy_tree(own + L"\\WTF", wtf, false, unused);
     else if (ok && exists(product + L"\\WTF\\Config.wtf"))
         ok = CopyFileW((product + L"\\WTF\\Config.wtf").c_str(), (wtf + L"\\Config.wtf").c_str(), FALSE) != FALSE;
+    // Retain player-installed addons across a genuine client update. The staged copy
+    // contains the official AddOns first; overlay the player's saved folder (CopyFileW
+    // with bFailIfExists=FALSE in copy_tree) without touching the original installation.
+    if (ok && is_dir(own + L"\\Interface\\AddOns")) {
+        wstr stage_interface = stage + L"\\Interface";
+        if (!is_dir(stage_interface))
+            ok = CreateDirectoryW(stage_interface.c_str(), nullptr) != FALSE;
+        if (ok)
+            ok = copy_tree(own + L"\\Interface\\AddOns",
+                           stage_interface + L"\\AddOns", false, unused);
+    }
     if (ok) ok = write_file(stage + L"\\" REALM_ID L"-client.txt", to_utf8(key));
     if (!ok) {
         delete_own(stage, own);
