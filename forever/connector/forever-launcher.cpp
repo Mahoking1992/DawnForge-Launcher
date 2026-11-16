@@ -820,6 +820,9 @@ static bool manifest(const wstr& dir, const wstr& rel, bool top, std::vector<wst
     for (const auto& fd : items) {
         if (top && skipped_top(fd.cFileName)) continue;
         wstr r = rel.empty() ? wstr(fd.cFileName) : rel + L"\\" + fd.cFileName;
+        // Player-managed AddOns do not belong to the official-client fingerprint.
+        // Otherwise an installed addon makes PLAY rebuild and erase the whole private copy.
+        if (lower(r) == L"interface\\addons") continue;
         if (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) return false;  // a link in the client folder: refuse
         if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
             if (runtime_file(lower(r) + L"\\")) continue;
@@ -999,6 +1002,69 @@ static void archive_official_wdb(const wstr& official_product) {
         if (!delete_tree_in(arch + L"\\" + sets[i], arch)) say(L"official cache archive: could not remove old set %s", sets[i].c_str());
 }
 
+// Merge player-managed AddOns without deleting any destination-only file. The
+// official folder is where many players install their addons, while the game is
+// launched from the private _forever_<realm>_ copy. A new or newer official addon
+// must reach that copy even when no game binary changed.
+static bool sync_player_addons(const wstr& source, const wstr& destination) {
+    DWORD source_attr = GetFileAttributesW(source.c_str());
+    if (source_attr == INVALID_FILE_ATTRIBUTES) {
+        DWORD e = GetLastError();
+        return e == ERROR_FILE_NOT_FOUND || e == ERROR_PATH_NOT_FOUND;
+    }
+    if (!(source_attr & FILE_ATTRIBUTE_DIRECTORY) || (source_attr & FILE_ATTRIBUTE_REPARSE_POINT)) {
+        say(L"addons: source must be a real directory: %s", source.c_str());
+        return false;
+    }
+    DWORD dest_attr = GetFileAttributesW(destination.c_str());
+    if (dest_attr == INVALID_FILE_ATTRIBUTES) {
+        if (!CreateDirectoryW(destination.c_str(), nullptr)) {
+            say(L"addons: cannot create %s (error %lu)", destination.c_str(), GetLastError());
+            return false;
+        }
+    } else if (!(dest_attr & FILE_ATTRIBUTE_DIRECTORY) || (dest_attr & FILE_ATTRIBUTE_REPARSE_POINT)) {
+        say(L"addons: destination must be a real directory: %s", destination.c_str());
+        return false;
+    }
+    std::vector<WIN32_FIND_DATAW> items;
+    if (!list_dir(source, items)) return false;
+    for (const auto& fd : items) {
+        wstr from = source + L"\\" + fd.cFileName;
+        wstr to = destination + L"\\" + fd.cFileName;
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) {
+            say(L"addons: refusing to follow link %s", from.c_str());
+            return false;
+        }
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            if (!sync_player_addons(from, to)) return false;
+            continue;
+        }
+        WIN32_FILE_ATTRIBUTE_DATA dest_data = {};
+        bool present = GetFileAttributesExW(to.c_str(), GetFileExInfoStandard, &dest_data) != FALSE;
+        if (!present) {
+            DWORD e = GetLastError();
+            if (e != ERROR_FILE_NOT_FOUND && e != ERROR_PATH_NOT_FOUND) return false;
+        } else if ((dest_data.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) != 0) {
+            say(L"addons: existing target is not a regular file: %s", to.c_str());
+            return false;
+        }
+        // Don't overwrite a player's newer addon in the private copy.
+        if (present && CompareFileTime(&fd.ftLastWriteTime, &dest_data.ftLastWriteTime) <= 0) continue;
+        wstr temp = to + L".dawnforge-sync.tmp";
+        if (!CopyFileW(from.c_str(), temp.c_str(), FALSE)) {
+            say(L"addons: copy failed: %s (error %lu)", from.c_str(), GetLastError());
+            return false;
+        }
+        if (!MoveFileExW(temp.c_str(), to.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+            DWORD error = GetLastError();
+            DeleteFileW(temp.c_str());
+            say(L"addons: replace failed: %s (error %lu)", to.c_str(), error);
+            return false;
+        }
+    }
+    return true;
+}
+
 // Makes sure <product><id>_ (next to the official product folder) is a current, complete copy of the official
 // client; returns its path, or empty and a reason. The previous copy is kept as <copy>.old until a session with the new
 // copy has succeeded (wWinMain removes it then).
@@ -1011,7 +1077,16 @@ static wstr prepare_own_client(const wstr& root, const wstr& product, const wstr
     std::string have;
     if (read_file(own + L"\\" REALM_ID L"-client.txt", have) && to_wide(have) == key) {
         std::vector<wstr> cur;  // the existing copy must still match the official files one for one
-        if (manifest(own, L"", true, cur) && cur == mf) return own;
+        if (manifest(own, L"", true, cur) && cur == mf) {
+            // Each PLAY also imports addons installed in the original _forever_
+            // folder. Neither folder loses player-only addon files.
+            if (!sync_player_addons(product + L"\\Interface\\AddOns",
+                                    own + L"\\Interface\\AddOns")) {
+                why = L"could not synchronize player addons; check Interface\\AddOns";
+                return L"";
+            }
+            return own;
+        }
         say(L"own client: the copy no longer matches the official files, rebuilding");
     }
     uint64_t need = 200ULL << 20;
@@ -1042,6 +1117,17 @@ static wstr prepare_own_client(const wstr& root, const wstr& product, const wstr
     if (ok && is_dir(own + L"\\WTF")) ok = copy_tree(own + L"\\WTF", wtf, false, unused);
     else if (ok && exists(product + L"\\WTF\\Config.wtf"))
         ok = CopyFileW((product + L"\\WTF\\Config.wtf").c_str(), (wtf + L"\\Config.wtf").c_str(), FALSE) != FALSE;
+    // Retain newer/private-only addons after a genuine game update. The staged
+    // copy already contains the original _forever_ addons, so merge instead of
+    // replacing one player's edits with older files from the other folder.
+    if (ok && is_dir(own + L"\\Interface\\AddOns")) {
+        wstr stage_interface = stage + L"\\Interface";
+        if (!is_dir(stage_interface))
+            ok = CreateDirectoryW(stage_interface.c_str(), nullptr) != FALSE;
+        if (ok)
+            ok = sync_player_addons(own + L"\\Interface\\AddOns",
+                                    stage_interface + L"\\AddOns");
+    }
     if (ok) ok = write_file(stage + L"\\" REALM_ID L"-client.txt", to_utf8(key));
     if (!ok) {
         delete_own(stage, own);
