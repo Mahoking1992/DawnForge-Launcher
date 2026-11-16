@@ -50,12 +50,33 @@ int main() {
         write_file(own_wtf + L"\\bindings-cache.wtf", "bind A TURNLEFT");
     check("create player addon and bindings", ok);
 
+    // Players commonly install addons in the ORIGINAL _forever_ client, which
+    // is separate from the _forever_dawnforge_ folder actually launched.
+    const wstr original_addon = official_addons + L"\\OriginalAddon";
+    check("install addon in original Forever folder",
+          mkdir_one(original_addon) &&
+          write_file(original_addon + L"\\OriginalAddon.toc", "original version 1"));
+
     why.clear();
     check("adding player addon does not force client rebuild",
           prepare_own_client(root, product, L"Wow.exe", why) == own &&
           !exists(own + L".old"));
     check("player addon survives PLAY",
           text_is(addon + L"\\PlayerAddon.toc", "player version 1"));
+    check("addon installed in original folder appears in private launched copy",
+          text_is(user_addons + L"\\OriginalAddon\\OriginalAddon.toc", "original version 1"));
+
+    // Simulate a newer addon version installed in the original folder.
+    // The next PLAY must synchronize it without rebuilding the whole client.
+    Sleep(25);
+    check("update addon in original Forever folder",
+          write_file(original_addon + L"\\OriginalAddon.toc", "original version 2"));
+    why.clear();
+    check("original addon update does not rebuild client",
+          prepare_own_client(root, product, L"Wow.exe", why) == own &&
+          !exists(own + L".old"));
+    check("newer original addon version synchronized to private client",
+          text_is(user_addons + L"\\OriginalAddon\\OriginalAddon.toc", "original version 2"));
 
     // An upstream patch legitimately changes the canonical fingerprint.
     check("simulate official client patch",
@@ -71,6 +92,8 @@ int main() {
           text_is(own + L"\\PatchData.bin", "new official patch"));
     check("official addon remains",
           text_is(user_addons + L"\\BlizzardDefault.toc", "official"));
+    check("original player addon survives game patch",
+          text_is(user_addons + L"\\OriginalAddon\\OriginalAddon.toc", "original version 2"));
 
     check("temporary mock client removed", delete_tree_in(root, root));
     std::cout << (failures ? "FAILED " : "ALL PASSED ") << failures << "\n";
