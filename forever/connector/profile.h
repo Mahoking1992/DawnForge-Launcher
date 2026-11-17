@@ -2,7 +2,7 @@
 #pragma once
 #define REALM_SERVER L"play.dawnforge.eu"
 #define REALM_PORTAL L"trinity"
-#define REALM_CONFIG L"DawnForgeForever.wtf"
+#define REALM_CONFIG L"Config.wtf"
 #define REALM_NAME L"DawnForge Forever"
 #define REALM_LONG_NAME L"DawnForgeForever"
 #define REALM_LONG_NAME_A "DawnForgeForever"
