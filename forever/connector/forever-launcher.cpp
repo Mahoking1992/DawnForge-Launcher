@@ -1405,11 +1405,32 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         login = {};
     }
 
-    // 4. our own settings file with our portal; Config.wtf itself stays as Blizzard left it. In the own copy the base is
-    // our file itself when it exists (the client saves its settings there on exit, the copy has no Config.wtf); before,
-    // it was rebuilt from nothing on every start and the player's settings were lost. Otherwise the base is Config.wtf.
+    // Experimental Forever-only fix: use the standard Config.wtf in the PRIVATE
+    // _forever_dawnforge_ game copy. Never modify the original _forever_ client.
+    // Preserve the previously saved DawnForgeForever.wtf configuration once, and
+    // retain both the previous config and a backup of the pre-migration Config.wtf.
     wstr wtf = product + L"\\WTF";
     CreateDirectoryW(wtf.c_str(), nullptr);
+    if (own_client && lower(ini[L"config"]) == L"config.wtf") {
+        const wstr old_config = wtf + L"\\DawnForgeForever.wtf";
+        const wstr standard_config = wtf + L"\\Config.wtf";
+        const wstr migrated = wtf + L"\\DawnForge-standard-config-v1.migrated";
+        if (!exists(migrated) && exists(old_config)) {
+            if (exists(standard_config)) {
+                const wstr backup = standard_config + L".dawnforge-pre-migration.bak";
+                if (!exists(backup) && !CopyFileW(standard_config.c_str(), backup.c_str(), TRUE))
+                    return fail(L"Cannot back up the private Config.wtf before standard-config test", GetLastError());
+            }
+            std::string previous;
+            if (!read_file(old_config, previous))
+                return fail(L"Cannot read previous private DawnForgeForever.wtf", GetLastError());
+            if (!write_atomic(standard_config, previous, false))
+                return fail(L"Cannot migrate previous settings to private Config.wtf", GetLastError());
+            if (!write_atomic(migrated, "standard config migration v1\r\n", false))
+                return fail(L"Cannot mark private config migration complete", GetLastError());
+            say(L"settings: migrated previous private config to standard Config.wtf (original preserved)");
+        }
+    }
     std::string raw;
     wstr own_cfg = wtf + L"\\" + ini[L"config"];
     wstr cfg = own_client && exists(own_cfg) ? own_cfg : wtf + L"\\Config.wtf";
@@ -1451,7 +1472,11 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     }
     STARTUPINFOW si = {sizeof(si)};
     PROCESS_INFORMATION pi = {};
-    wstr cmdline = L"\"" + exe + L"\" -config " + ini[L"config"];
+    // Default config loading may apply login-time keybindings earlier than -config.
+    // This is a test hypothesis, not a confirmed workaround.
+    wstr cmdline = L"\"" + exe + L"\"";
+    if (lower(ini[L"config"]) != L"config.wtf")
+        cmdline += L" -config " + ini[L"config"];
     std::vector<wchar_t> cmd(cmdline.begin(), cmdline.end());
     cmd.push_back(L'\0');
     if (!CreateProcessW(exe.c_str(), cmd.data(), nullptr, nullptr, FALSE, 0, nullptr, product.c_str(), &si, &pi))
